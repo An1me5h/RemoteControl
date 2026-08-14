@@ -1,0 +1,350 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/bg"
+    android:fitsSystemWindows="true">
+
+    <!-- status bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="10dp">
+
+        <View
+            android:id="@+id/statusDot"
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:background="@drawable/dot_red" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="Disconnected"
+            android:textColor="@color/text_primary"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/latencyText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/surface">
+
+        <Button
+            android:id="@+id/tabControl"
+            style="@style/TabButton"
+            android:text="CONTROL" />
+
+        <Button
+            android:id="@+id/tabConfig"
+            style="@style/TabButton"
+            android:text="CONFIG" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <!-- CONTROL tab -->
+        <LinearLayout
+            android:id="@+id/controlPanel"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="8dp">
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <com.remotecontrol.TrackpadView
+                    android:id="@+id/trackpadView"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@color/surface" />
+
+                <ScrollView
+                    android:id="@+id/keyboardPanel"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:visibility="gone"
+                    android:background="@color/surface">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="6dp">
+
+                        <!-- special keys -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal">
+
+                            <Button android:id="@+id/keyEsc" style="@style/KeyButton" android:text="Esc" />
+                            <Button android:id="@+id/keyTab" style="@style/KeyButton" android:text="Tab" />
+                            <Button android:id="@+id/keyCtrl" style="@style/KeyButton" android:text="Ctrl" />
+                            <Button android:id="@+id/keyAlt" style="@style/KeyButton" android:text="Alt" />
+                            <Button android:id="@+id/keyShift" style="@style/KeyButton" android:text="Shift" />
+                            <Button android:id="@+id/keyWin" style="@style/KeyButton" android:text="Win" />
+                        </LinearLayout>
+
+                        <!-- number row -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal">
+
+                            <Button style="@style/CharKeyButton" android:tag="1" android:text="1" />
+                            <Button style="@style/CharKeyButton" android:tag="2" android:text="2" />
+                            <Button style="@style/CharKeyButton" android:tag="3" android:text="3" />
+                            <Button style="@style/CharKeyButton" android:tag="4" android:text="4" />
+                            <Button style="@style/CharKeyButton" android:tag="5" android:text="5" />
+                            <Button style="@style/CharKeyButton" android:tag="6" android:text="6" />
+                            <Button style="@style/CharKeyButton" android:tag="7" android:text="7" />
+                            <Button style="@style/CharKeyButton" android:tag="8" android:text="8" />
+                            <Button style="@style/CharKeyButton" android:tag="9" android:text="9" />
+                            <Button style="@style/CharKeyButton" android:tag="0" android:text="0" />
+                        </LinearLayout>
+
+                        <!-- qwertyuiop -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal">
+
+                            <Button style="@style/CharKeyButton" android:tag="q" android:text="q" />
+                            <Button style="@style/CharKeyButton" android:tag="w" android:text="w" />
+                            <Button style="@style/CharKeyButton" android:tag="e" android:text="e" />
+                            <Button style="@style/CharKeyButton" android:tag="r" android:text="r" />
+                            <Button style="@style/CharKeyButton" android:tag="t" android:text="t" />
+                            <Button style="@style/CharKeyButton" android:tag="y" android:text="y" />
+                            <Button style="@style/CharKeyButton" android:tag="u" android:text="u" />
+                            <Button style="@style/CharKeyButton" android:tag="i" android:text="i" />
+                            <Button style="@style/CharKeyButton" android:tag="o" android:text="o" />
+                            <Button style="@style/CharKeyButton" android:tag="p" android:text="p" />
+                        </LinearLayout>
+
+                        <!-- asdfghjkl -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal">
+
+                            <Button style="@style/CharKeyButton" android:tag="a" android:text="a" />
+                            <Button style="@style/CharKeyButton" android:tag="s" android:text="s" />
+                            <Button style="@style/CharKeyButton" android:tag="d" android:text="d" />
+                            <Button style="@style/CharKeyButton" android:tag="f" android:text="f" />
+                            <Button style="@style/CharKeyButton" android:tag="g" android:text="g" />
+                            <Button style="@style/CharKeyButton" android:tag="h" android:text="h" />
+                            <Button style="@style/CharKeyButton" android:tag="j" android:text="j" />
+                            <Button style="@style/CharKeyButton" android:tag="k" android:text="k" />
+                            <Button style="@style/CharKeyButton" android:tag="l" android:text="l" />
+                        </LinearLayout>
+
+                        <!-- zxcvbnm -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal">
+
+                            <Button style="@style/CharKeyButton" android:tag="z" android:text="z" />
+                            <Button style="@style/CharKeyButton" android:tag="x" android:text="x" />
+                            <Button style="@style/CharKeyButton" android:tag="c" android:text="c" />
+                            <Button style="@style/CharKeyButton" android:tag="v" android:text="v" />
+                            <Button style="@style/CharKeyButton" android:tag="b" android:text="b" />
+                            <Button style="@style/CharKeyButton" android:tag="n" android:text="n" />
+                            <Button style="@style/CharKeyButton" android:tag="m" android:text="m" />
+                            <Button style="@style/CharKeyButton" android:tag="," android:text="," />
+                            <Button style="@style/CharKeyButton" android:tag="." android:text="." />
+                        </LinearLayout>
+
+                        <!-- arrows + backspace/enter -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal">
+
+                            <Button android:id="@+id/keyLeft" style="@style/KeyButton" android:text="←" />
+                            <Button android:id="@+id/keyUp" style="@style/KeyButton" android:text="↑" />
+                            <Button android:id="@+id/keyDown" style="@style/KeyButton" android:text="↓" />
+                            <Button android:id="@+id/keyRight" style="@style/KeyButton" android:text="→" />
+                            <Button android:id="@+id/keyBack" style="@style/KeyButton" android:text="⌫" />
+                        </LinearLayout>
+
+                        <!-- space + enter -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal">
+
+                            <Button
+                                android:id="@+id/keySpace"
+                                style="@style/KeyButton"
+                                android:layout_weight="3"
+                                android:text="Space" />
+
+                            <Button
+                                android:id="@+id/keyEnter"
+                                style="@style/KeyButton"
+                                android:layout_weight="1"
+                                android:text="Enter" />
+                        </LinearLayout>
+
+                        <!-- custom keys: user-defined combos, e.g. Ctrl+T -->
+                        <TextView
+                            style="@style/ConfigLabel"
+                            android:layout_marginTop="12dp"
+                            android:text="Custom Keys" />
+
+                        <LinearLayout
+                            android:id="@+id/customKeysContainer"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical" />
+
+                        <Button
+                            android:id="@+id/btnAddCustomKey"
+                            style="@style/KeyButton"
+                            android:layout_width="match_parent"
+                            android:layout_marginTop="4dp"
+                            android:text="+ Custom Key" />
+                    </LinearLayout>
+                </ScrollView>
+
+                <!-- type-and-send: real phone keyboard, sent as one block instead of
+                     one KEY packet per character -->
+                <LinearLayout
+                    android:id="@+id/textPanel"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    android:background="@color/surface"
+                    android:padding="8dp">
+
+                    <EditText
+                        android:id="@+id/etTextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:layout_weight="1"
+                        android:gravity="top|start"
+                        android:inputType="textMultiLine"
+                        android:hint="Type here, then Send"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary"
+                        android:background="@null" />
+
+                    <Button
+                        android:id="@+id/btnSendText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:backgroundTint="@color/accent"
+                        android:text="Send" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <Button android:id="@+id/btnLeft" style="@style/ClickButton" android:text="LEFT" />
+                <Button android:id="@+id/btnMiddle" style="@style/ClickButton" android:text="MID" />
+                <Button android:id="@+id/btnRight" style="@style/ClickButton" android:text="RIGHT" />
+                <Button android:id="@+id/btnKeys" style="@style/ClickButton" android:text="KEYS" />
+                <Button android:id="@+id/btnText" style="@style/ClickButton" android:text="TEXT" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- CONFIG tab -->
+        <ScrollView
+            android:id="@+id/configPanel"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="20dp">
+
+                <TextView
+                    style="@style/ConfigLabel"
+                    android:text="PC IP address (blank = auto-discover)" />
+
+                <EditText
+                    android:id="@+id/etHost"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="text"
+                    android:hint="192.168.1.42"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_secondary" />
+
+                <TextView
+                    style="@style/ConfigLabel"
+                    android:layout_marginTop="16dp"
+                    android:text="PC port" />
+
+                <EditText
+                    android:id="@+id/etPort"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="number"
+                    android:text="5201"
+                    android:textColor="@color/text_primary" />
+
+                <TextView
+                    android:id="@+id/sensitivityLabel"
+                    style="@style/ConfigLabel"
+                    android:layout_marginTop="16dp"
+                    android:text="Sensitivity: 1.4" />
+
+                <SeekBar
+                    android:id="@+id/sensitivitySeek"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="30"
+                    android:progress="12" />
+
+                <Button
+                    android:id="@+id/btnConnect"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:backgroundTint="@color/accent"
+                    android:text="Connect" />
+
+                <TextView
+                    android:id="@+id/logText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </ScrollView>
+    </FrameLayout>
+</LinearLayout>
