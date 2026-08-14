@@ -292,6 +292,25 @@
 
                 <TextView
                     style="@style/ConfigLabel"
+                    android:text="Saved Devices" />
+
+                <LinearLayout
+                    android:id="@+id/savedDevicesContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="4dp" />
+
+                <Button
+                    android:id="@+id/btnSaveDevice"
+                    style="@style/KeyButton"
+                    android:layout_width="match_parent"
+                    android:layout_marginTop="4dp"
+                    android:text="+ Save Current Device" />
+
+                <TextView
+                    style="@style/ConfigLabel"
+                    android:layout_marginTop="20dp"
                     android:text="PC IP address (blank = auto-discover)" />
 
                 <EditText
@@ -328,6 +347,19 @@
                     android:layout_height="wrap_content"
                     android:max="30"
                     android:progress="12" />
+
+                <TextView
+                    android:id="@+id/holdThresholdLabel"
+                    style="@style/ConfigLabel"
+                    android:layout_marginTop="16dp"
+                    android:text="Hold threshold: 2.0s" />
+
+                <SeekBar
+                    android:id="@+id/holdThresholdSeek"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="27"
+                    android:progress="17" />
 
                 <Button
                     android:id="@+id/btnConnect"

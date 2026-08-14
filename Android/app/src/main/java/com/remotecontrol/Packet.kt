@@ -63,13 +63,23 @@ sealed class Packet {
         const val DOWN = 0x28
         const val DELETE = 0x2E
         const val LWIN = 0x5B
+        const val OEM_COMMA = 0xBC
+        const val OEM_PERIOD = 0xBE
 
-        /** VK codes for 'A'-'Z' / '0'-'9' match their ASCII codes - used for modifier combos
-         *  (e.g. holding Ctrl then tapping 'c') where a real VK press is needed instead of
-         *  a layout-independent unicode KEY event. Returns null for anything else. */
+        /** VK codes for 'A'-'Z' / '0'-'9' match their ASCII codes; comma/period map to their
+         *  own OEM codes. Used for modifier combos (e.g. holding Ctrl then tapping 'c') where
+         *  a real VK press is needed instead of a layout-independent unicode KEY event, and
+         *  for hold-mode (see [MainActivity.attachHoldable]), which only makes sense for a key
+         *  with a real VK code - holding a synthetic unicode char down has no OS meaning.
+         *  Returns null for anything else (other punctuation isn't mapped). */
         fun forChar(c: Char): Int? {
             val upper = c.uppercaseChar()
-            return if (upper in 'A'..'Z' || upper in '0'..'9') upper.code else null
+            return when {
+                upper in 'A'..'Z' || upper in '0'..'9' -> upper.code
+                c == ',' -> OEM_COMMA
+                c == '.' -> OEM_PERIOD
+                else -> null
+            }
         }
     }
 }

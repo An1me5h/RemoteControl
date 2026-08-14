@@ -50,6 +50,9 @@ class TrayApp : ApplicationContext
             : $"[{Now()}] Client disconnected. {count} connected.");
         _server.PacketReceived += p => Console.WriteLine($"[{Now()}] {PacketFormat.Describe(p)}");
         _server.UndecodableLineReceived += line => Console.WriteLine($"[{Now()}] ?? unrecognized: {line}");
+        _server.HeldInputReleased += (vkCount, mouseReleased) => Console.WriteLine(
+            $"[{Now()}] Client disconnected while holding input - released {vkCount} key(s)" +
+            (mouseReleased ? " and the left mouse button." : "."));
         _server.Start();
 
         Discovery.StartResponder(Server.Port, _cts.Token);

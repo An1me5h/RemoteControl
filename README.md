@@ -79,26 +79,47 @@ auto-discover the PC on the LAN, or type its IP manually (shown in the Windows t
 tooltip / right-click menu) if discovery doesn't find it (e.g. the phone and PC are on
 different Wi-Fi subnets, or a firewall blocks UDP broadcast).
 
+**Saved Devices**: if you control more than one machine from the same phone (a PC, a
+media-center laptop, a Raspberry Pi, whatever else runs `RemoteControl.exe`), type an
+IP once, tap **+ Save Current Device**, give it a name and a type (TV, Laptop, Desktop,
+Monitor, Raspberry Pi, Smart Fridge, or Other) — it shows up as a button in the Saved
+Devices list from then on. Tapping a saved device fills in its IP/port and switches the
+connection to it immediately, even if you're already connected to something else.
+Long-press a saved device to delete it.
+
 CONTROL tab: the trackpad panel supports 1-finger drag to move the cursor, tap with
 1/2/3 fingers for left/right/middle click, double-tap for double-click, and long-press
 to start a drag (release to drop it). The **KEYS** button swaps the trackpad for an
-on-screen keyboard; **Ctrl/Alt/Shift/Win** are sticky toggles — tap to hold, tap again to
-release — so combos like Ctrl+C work by holding Ctrl then tapping C. The **TEXT** button
-swaps in a text box instead — type with the phone's own keyboard (autocorrect, swipe-
-typing, whatever you normally use) and tap **Send** to type the whole thing on the PC at
-once, rather than one packet per keystroke. Only one of trackpad/keyboard/text box is
-ever showing at a time; tapping KEYS or TEXT again while it's already active goes back to
-the trackpad.
+on-screen keyboard. The **TEXT** button swaps in a text box instead — type with the
+phone's own keyboard (autocorrect, swipe-typing, whatever you normally use) and tap
+**Send** to type the whole thing on the PC at once, rather than one packet per keystroke.
+Only one of trackpad/keyboard/text box is ever showing at a time; tapping KEYS or TEXT
+again while it's already active goes back to the trackpad.
 
-**Modifier combos**: holding Ctrl/Alt/Shift/Win (tap to toggle) and then tapping a letter,
-digit, or a special key like Tab/Esc/Enter/arrows already sends a real combo — e.g. hold
-Ctrl, tap Tab, gives Ctrl+Tab. **Custom Keys**, at the bottom of the on-screen keyboard,
-is a faster one-tap alternative for combos you use often: tap **+ Custom Key**, give it a
-name, tick whichever of Ctrl/Alt/Shift/Win it needs, pick the key it ends with, and Save.
-The PC receives the whole combo as one atomic keypress (all keys down, then all up, in a
-single batch) rather than a sequence of separate hold/tap/release actions, so it behaves
-exactly like pressing them together on a real keyboard. Long-press a custom key to delete
-it.
+**Hold mode**: every key on the on-screen keyboard — letters, digits, Ctrl/Alt/Shift/Win,
+arrows, Enter, Tab, Backspace, Space, Esc — behaves like a real keyboard key: a quick tap
+presses and releases it once, same as always. **Holding a key down** instead sends it down
+and leaves it held — even after you lift your finger — until you tap that same key again
+to release it. That's how you build combos: hold Ctrl (it lights up), tap C, tap Ctrl
+again to let go. Because holding is now available on any key, not just the four
+modifiers, you can also do things like hold an arrow key or Backspace for continuous
+repeat in whatever app you're controlling. How long you need to hold before it engages is
+adjustable in CONFIG (**Hold threshold**, 0.3s–3.0s, defaults to 2.0s) — turn it down for
+a snappier feel, or up if fast typing keeps accidentally triggering it.
+
+Two independent safety nets make sure a held key can never get stuck on the PC: if you
+background the app while something is held, the phone releases it right away. And if the
+**connection itself drops** (Wi-Fi hiccup, phone walks out of range, PC sleeps) while a
+key is held, the PC notices the instant that connection ends and releases whatever it was
+holding on its own — it doesn't wait for or need a message from the phone, which is what
+actually matters, since a dead connection can't carry one anyway.
+
+**Custom Keys**, at the bottom of the on-screen keyboard, is a faster one-tap alternative
+for combos you use often, instead of the hold-then-tap-then-release dance above: tap
+**+ Custom Key**, give it a name, tick whichever of Ctrl/Alt/Shift/Win it needs, pick the
+key it ends with, and Save. The PC receives the whole combo as one atomic keypress (all
+keys down, then all up, in a single batch) rather than a sequence of separate actions.
+Long-press a custom key to delete it.
 
 ## Firewall
 

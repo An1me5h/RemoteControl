@@ -16,6 +16,7 @@ class Server
     public event Action<int>? ClientCountChanged;
     public event Action<Packet>? PacketReceived;
     public event Action<string>? UndecodableLineReceived;
+    public event Action<int, bool>? HeldInputReleased;
 
     public void Start()
     {
@@ -53,6 +54,11 @@ class Server
         Interlocked.Increment(ref _clientCount);
         ClientCountChanged?.Invoke(_clientCount);
 
+        // Tracks input this client left "down" (a held key, a mouse button mid-drag) so it
+        // can be released the moment the connection ends, no matter why. See ReleaseHeldInput.
+        var heldVks = new HashSet<int>();
+        bool leftButtonDown = false;
+
         try
         {
             using (client)
@@ -74,10 +80,23 @@ class Server
 
                     PacketReceived?.Invoke(packet.Value);
 
-                    if (packet.Value.Type == PacketType.Ping)
+                    switch (packet.Value.Type)
                     {
-                        await writer.WriteLineAsync("{\"t\":\"PONG\"}");
-                        continue;
+                        case PacketType.Ping:
+                            await writer.WriteLineAsync("{\"t\":\"PONG\"}");
+                            continue;
+                        case PacketType.VkDown:
+                            heldVks.Add(packet.Value.K);
+                            break;
+                        case PacketType.VkUp:
+                            heldVks.Remove(packet.Value.K);
+                            break;
+                        case PacketType.LDown:
+                            leftButtonDown = true;
+                            break;
+                        case PacketType.LUp:
+                            leftButtonDown = false;
+                            break;
                     }
 
                     InputInjector.Dispatch(packet.Value);
@@ -90,8 +109,25 @@ class Server
         }
         finally
         {
+            ReleaseHeldInput(heldVks, leftButtonDown);
             Interlocked.Decrement(ref _clientCount);
             ClientCountChanged?.Invoke(_clientCount);
         }
+    }
+
+    /// Releases whatever this client left held when it disconnected. This is the only
+    /// reliable place to do it: once the connection is gone, there is no way for the phone
+    /// to send VKUP/LUP anymore, so anything still down (e.g. a held Win key from the
+    /// on-screen keyboard's hold mode) would otherwise stay stuck in Windows' real
+    /// keyboard/mouse state indefinitely - corrupting every subsequent keystroke typed on
+    /// the PC's own keyboard, not just input from this app.
+    private void ReleaseHeldInput(HashSet<int> heldVks, bool leftButtonDown)
+    {
+        if (heldVks.Count == 0 && !leftButtonDown) return;
+
+        foreach (var vk in heldVks) InputInjector.KeyState((ushort)vk, false);
+        if (leftButtonDown) InputInjector.ButtonState(MouseButtonKind.Left, false);
+
+        HeldInputReleased?.Invoke(heldVks.Count, leftButtonDown);
     }
 }
