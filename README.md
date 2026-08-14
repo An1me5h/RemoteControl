@@ -83,7 +83,22 @@ CONTROL tab: the trackpad panel supports 1-finger drag to move the cursor, tap w
 1/2/3 fingers for left/right/middle click, double-tap for double-click, and long-press
 to start a drag (release to drop it). The **KEYS** button swaps the trackpad for an
 on-screen keyboard; **Ctrl/Alt/Shift/Win** are sticky toggles — tap to hold, tap again to
-release — so combos like Ctrl+C work by holding Ctrl then tapping C.
+release — so combos like Ctrl+C work by holding Ctrl then tapping C. The **TEXT** button
+swaps in a text box instead — type with the phone's own keyboard (autocorrect, swipe-
+typing, whatever you normally use) and tap **Send** to type the whole thing on the PC at
+once, rather than one packet per keystroke. Only one of trackpad/keyboard/text box is
+ever showing at a time; tapping KEYS or TEXT again while it's already active goes back to
+the trackpad.
+
+**Modifier combos**: holding Ctrl/Alt/Shift/Win (tap to toggle) and then tapping a letter,
+digit, or a special key like Tab/Esc/Enter/arrows already sends a real combo — e.g. hold
+Ctrl, tap Tab, gives Ctrl+Tab. **Custom Keys**, at the bottom of the on-screen keyboard,
+is a faster one-tap alternative for combos you use often: tap **+ Custom Key**, give it a
+name, tick whichever of Ctrl/Alt/Shift/Win it needs, pick the key it ends with, and Save.
+The PC receives the whole combo as one atomic keypress (all keys down, then all up, in a
+single batch) rather than a sequence of separate hold/tap/release actions, so it behaves
+exactly like pressing them together on a real keyboard. Long-press a custom key to delete
+it.
 
 ## Firewall
 
@@ -104,6 +119,8 @@ Newline-delimited JSON, phone → PC, TCP port 5201:
 | `{"t":"KEY","ch":".."}` | type a unicode character |
 | `{"t":"VKDOWN","k":..}` / `{"t":"VKUP","k":..}` | hold/release a Windows virtual-key (modifiers) |
 | `{"t":"VKTAP","k":..}` | press+release a virtual-key (Enter, arrows, etc.) |
+| `{"t":"TEXT","text":".."}` | type a whole block of text at once (the TEXT panel's Send button) |
+| `{"t":"COMBO","keys":[..]}` | press multiple virtual-keys together as one atomic combo (custom keys) |
 | `{"t":"PING"}` | PC replies `{"t":"PONG"}` — used for the latency readout |
 
 UDP port 58201, discovery only: phone broadcasts `RC_DISCOVER`, PC replies

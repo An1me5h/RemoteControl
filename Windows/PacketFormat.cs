@@ -1,6 +1,6 @@
 namespace RemoteControl;
 
-/// Turns a decoded [Packet] into a human-readable line for the debug log window.
+/// Turns a decoded [Packet] into a human-readable line for the console log.
 static class PacketFormat
 {
     private static readonly Dictionary<int, string> KnownVk = new()
@@ -23,6 +23,8 @@ static class PacketFormat
         PacketType.VkDown => $"VK DOWN  {VkName(p.K)}",
         PacketType.VkUp => $"VK UP    {VkName(p.K)}",
         PacketType.VkTap => $"VK TAP   {VkName(p.K)}",
+        PacketType.Text => DescribeText(p),
+        PacketType.Combo => DescribeCombo(p),
         PacketType.Ping => "PING",
         _ => p.Type.ToString()
     };
@@ -37,4 +39,18 @@ static class PacketFormat
     }
 
     private static string VkName(int k) => KnownVk.TryGetValue(k, out var name) ? $"{name} (0x{k:X2})" : $"0x{k:X2}";
+
+    private static string DescribeText(Packet p)
+    {
+        var text = p.Text ?? "";
+        var oneLine = text.Replace("\n", "\\n");
+        var preview = oneLine.Length <= 60 ? oneLine : oneLine[..60] + "...";
+        return $"TEXT     \"{preview}\" ({text.Length} chars)";
+    }
+
+    private static string DescribeCombo(Packet p)
+    {
+        var names = (p.Keys ?? Array.Empty<int>()).Select(VkName);
+        return $"COMBO    {string.Join(" + ", names)}";
+    }
 }

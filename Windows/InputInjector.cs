@@ -22,6 +22,40 @@ static class InputInjector
             case PacketType.VkDown: KeyState((ushort)p.K, true); break;
             case PacketType.VkUp: KeyState((ushort)p.K, false); break;
             case PacketType.VkTap: KeyTap((ushort)p.K); break;
+            case PacketType.Text: if (p.Text != null) SendText(p.Text); break;
+            case PacketType.Combo: if (p.Keys != null) Combo(p.Keys); break;
+        }
+    }
+
+    // All keys down (in order), then all keys up (reverse order), as ONE SendInput call -
+    // this is what makes it a real combo (e.g. Ctrl+T) instead of a held modifier plus a
+    // separately-dispatched tap: every key's state change lands in the same OS input batch,
+    // so there's no window where Windows could see them as anything but pressed together.
+    public static void Combo(int[] vks)
+    {
+        var inputs = new INPUT[vks.Length * 2];
+        for (int i = 0; i < vks.Length; i++)
+            inputs[i] = KeyInput((ushort)vks[i], 0);
+        for (int i = 0; i < vks.Length; i++)
+            inputs[vks.Length + i] = KeyInput((ushort)vks[vks.Length - 1 - i], KEYEVENTF_KEYUP);
+
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    private const ushort VK_RETURN = 0x0D;
+
+    // Whole block at once instead of one KEY packet per character over the network -
+    // the phone's own on-screen keyboard already covers single keystrokes; this is for
+    // typing on the phone's real keyboard and sending the finished text like a paste.
+    // Goes through the same per-char KEYEVENTF_UNICODE path as SendChar (not a clipboard
+    // Ctrl+V) so it keeps working in fields that block paste, e.g. some password boxes.
+    public static void SendText(string text)
+    {
+        var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
+        foreach (char c in normalized)
+        {
+            if (c == '\n') KeyTap(VK_RETURN);
+            else SendChar(c);
         }
     }
 

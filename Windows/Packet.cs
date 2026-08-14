@@ -2,10 +2,12 @@ using System.Text.Json;
 
 namespace RemoteControl;
 
+// System.Linq is pulled in via ImplicitUsings for Select/ToArray below.
+
 enum PacketType
 {
     Move, Scroll, LClick, RClick, MClick, LDown, LUp,
-    Key, VkDown, VkUp, VkTap, Ping, Unknown
+    Key, VkDown, VkUp, VkTap, Text, Combo, Ping, Unknown
 }
 
 readonly record struct Packet(
@@ -14,7 +16,9 @@ readonly record struct Packet(
     double Dy = 0,
     int D = 0,
     char Ch = '\0',
-    int K = 0);
+    int K = 0,
+    string? Text = null,
+    int[]? Keys = null);
 
 static class PacketCodec
 {
@@ -41,6 +45,8 @@ static class PacketCodec
                 "VKDOWN" => PacketType.VkDown,
                 "VKUP" => PacketType.VkUp,
                 "VKTAP" => PacketType.VkTap,
+                "TEXT" => PacketType.Text,
+                "COMBO" => PacketType.Combo,
                 "PING" => PacketType.Ping,
                 _ => PacketType.Unknown
             };
@@ -58,7 +64,15 @@ static class PacketCodec
                 if (!string.IsNullOrEmpty(s)) ch = s[0];
             }
 
-            return new Packet(type, dx, dy, d, ch, k);
+            string? text = root.TryGetProperty("text", out var textP) ? textP.GetString() : null;
+
+            int[]? keys = null;
+            if (root.TryGetProperty("keys", out var keysP) && keysP.ValueKind == JsonValueKind.Array)
+            {
+                keys = keysP.EnumerateArray().Select(e => e.GetInt32()).ToArray();
+            }
+
+            return new Packet(type, dx, dy, d, ch, k, text, keys);
         }
         catch (JsonException)
         {

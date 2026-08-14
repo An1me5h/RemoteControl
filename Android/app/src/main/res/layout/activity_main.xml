@@ -208,8 +208,59 @@
                                 android:layout_weight="1"
                                 android:text="Enter" />
                         </LinearLayout>
+
+                        <!-- custom keys: user-defined combos, e.g. Ctrl+T -->
+                        <TextView
+                            style="@style/ConfigLabel"
+                            android:layout_marginTop="12dp"
+                            android:text="Custom Keys" />
+
+                        <LinearLayout
+                            android:id="@+id/customKeysContainer"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical" />
+
+                        <Button
+                            android:id="@+id/btnAddCustomKey"
+                            style="@style/KeyButton"
+                            android:layout_width="match_parent"
+                            android:layout_marginTop="4dp"
+                            android:text="+ Custom Key" />
                     </LinearLayout>
                 </ScrollView>
+
+                <!-- type-and-send: real phone keyboard, sent as one block instead of
+                     one KEY packet per character -->
+                <LinearLayout
+                    android:id="@+id/textPanel"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    android:background="@color/surface"
+                    android:padding="8dp">
+
+                    <EditText
+                        android:id="@+id/etTextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:layout_weight="1"
+                        android:gravity="top|start"
+                        android:inputType="textMultiLine"
+                        android:hint="Type here, then Send"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary"
+                        android:background="@null" />
+
+                    <Button
+                        android:id="@+id/btnSendText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:backgroundTint="@color/accent"
+                        android:text="Send" />
+                </LinearLayout>
             </FrameLayout>
 
             <LinearLayout
@@ -222,6 +273,7 @@
                 <Button android:id="@+id/btnMiddle" style="@style/ClickButton" android:text="MID" />
                 <Button android:id="@+id/btnRight" style="@style/ClickButton" android:text="RIGHT" />
                 <Button android:id="@+id/btnKeys" style="@style/ClickButton" android:text="KEYS" />
+                <Button android:id="@+id/btnText" style="@style/ClickButton" android:text="TEXT" />
             </LinearLayout>
         </LinearLayout>
 

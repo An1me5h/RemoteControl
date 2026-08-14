@@ -1,13 +1,18 @@
 package com.remotecontrol
 
+import android.app.AlertDialog
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
+import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 
@@ -26,6 +31,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var trackpadView: TrackpadView
     private lateinit var keyboardPanel: ScrollView
     private lateinit var btnKeys: Button
+    private lateinit var textPanel: View
+    private lateinit var etTextInput: EditText
+    private lateinit var btnSendText: Button
+    private lateinit var btnText: Button
+    private lateinit var customKeysContainer: LinearLayout
+    private lateinit var btnAddCustomKey: Button
     private lateinit var etHost: EditText
     private lateinit var etPort: EditText
     private lateinit var sensitivityLabel: TextView
@@ -40,6 +51,8 @@ class MainActivity : AppCompatActivity() {
         Packet.VK.LWIN to false
     )
 
+    private val customKeys = mutableListOf<CustomKey>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -51,8 +64,10 @@ class MainActivity : AppCompatActivity() {
         setupTabs()
         setupTrackpad()
         setupClickButtons()
-        setupKeyboardToggle()
+        setupPanelToggles()
         setupKeyboard()
+        setupCustomKeys()
+        setupTextPanel()
         setupConfig()
         setupConnection()
     }
@@ -68,6 +83,12 @@ class MainActivity : AppCompatActivity() {
         trackpadView = findViewById(R.id.trackpadView)
         keyboardPanel = findViewById(R.id.keyboardPanel)
         btnKeys = findViewById(R.id.btnKeys)
+        textPanel = findViewById(R.id.textPanel)
+        etTextInput = findViewById(R.id.etTextInput)
+        btnSendText = findViewById(R.id.btnSendText)
+        btnText = findViewById(R.id.btnText)
+        customKeysContainer = findViewById(R.id.customKeysContainer)
+        btnAddCustomKey = findViewById(R.id.btnAddCustomKey)
         etHost = findViewById(R.id.etHost)
         etPort = findViewById(R.id.etPort)
         sensitivityLabel = findViewById(R.id.sensitivityLabel)
@@ -99,12 +120,38 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnMiddle).setOnClickListener { conn.send(Packet.MiddleClick) }
     }
 
-    private fun setupKeyboardToggle() {
+    /** The centre panel is always exactly one of: trackpad, on-screen keyboard, or the
+     *  type-and-send text box - they never coexist, same reasoning as the original
+     *  trackpad/keyboard swap (no room for more than one at a usable size on a phone). */
+    private enum class CenterPanel { PAD, KEYS, TEXT }
+
+    private fun setupPanelToggles() {
         btnKeys.setOnClickListener {
-            val showingKeyboard = keyboardPanel.visibility == View.VISIBLE
-            keyboardPanel.visibility = if (showingKeyboard) View.GONE else View.VISIBLE
-            trackpadView.visibility = if (showingKeyboard) View.VISIBLE else View.GONE
-            btnKeys.text = if (showingKeyboard) "KEYS" else "PAD"
+            showPanel(if (currentPanel == CenterPanel.KEYS) CenterPanel.PAD else CenterPanel.KEYS)
+        }
+        btnText.setOnClickListener {
+            showPanel(if (currentPanel == CenterPanel.TEXT) CenterPanel.PAD else CenterPanel.TEXT)
+        }
+    }
+
+    private var currentPanel = CenterPanel.PAD
+
+    private fun showPanel(panel: CenterPanel) {
+        currentPanel = panel
+        trackpadView.visibility = if (panel == CenterPanel.PAD) View.VISIBLE else View.GONE
+        keyboardPanel.visibility = if (panel == CenterPanel.KEYS) View.VISIBLE else View.GONE
+        textPanel.visibility = if (panel == CenterPanel.TEXT) View.VISIBLE else View.GONE
+        btnKeys.setBackgroundResource(if (panel == CenterPanel.KEYS) R.drawable.key_bg_active else R.drawable.key_bg)
+        btnText.setBackgroundResource(if (panel == CenterPanel.TEXT) R.drawable.key_bg_active else R.drawable.key_bg)
+    }
+
+    private fun setupTextPanel() {
+        btnSendText.setOnClickListener {
+            val text = etTextInput.text.toString()
+            if (text.isNotEmpty()) {
+                conn.send(Packet.Text(text))
+                etTextInput.text.clear()
+            }
         }
     }
 
@@ -171,6 +218,98 @@ class MainActivity : AppCompatActivity() {
         } else {
             conn.send(Packet.Key(ch))
         }
+    }
+
+    private fun setupCustomKeys() {
+        customKeys.addAll(CustomKeyStore.load(prefs))
+        renderCustomKeys()
+        btnAddCustomKey.setOnClickListener { showAddCustomKeyDialog() }
+    }
+
+    /** Rebuilds customKeysContainer from [customKeys], two buttons per row. Tap sends the
+     *  combo; long-press offers to delete - the only way to remove one, since there's no
+     *  edit mode, just add/delete.
+     *
+     *  Buttons here are built in code, not inflated from XML, so the `KeyButton` style's
+     *  `layout_*` attributes (width/height/weight/margin) don't apply automatically - a
+     *  style only supplies View-level attributes (background, textColor, ...) to a
+     *  programmatically constructed view; LayoutParams still have to be set explicitly. */
+    private fun renderCustomKeys() {
+        customKeysContainer.removeAllViews()
+        var row: LinearLayout? = null
+        customKeys.forEachIndexed { i, key ->
+            if (i % 2 == 0) {
+                row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                customKeysContainer.addView(row)
+            }
+            val margin = dp(2)
+            val button = Button(this, null, 0, R.style.KeyButton).apply {
+                text = key.label
+                layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    setMargins(margin, margin, margin, margin)
+                }
+                setOnClickListener { conn.send(Packet.Combo(key.keys)) }
+                setOnLongClickListener { confirmDeleteCustomKey(key); true }
+            }
+            row?.addView(button)
+        }
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun confirmDeleteCustomKey(key: CustomKey) {
+        AlertDialog.Builder(this)
+            .setTitle("Delete \"${key.label}\"?")
+            .setPositiveButton("Delete") { _, _ ->
+                customKeys.remove(key)
+                CustomKeyStore.save(prefs, customKeys)
+                renderCustomKeys()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showAddCustomKeyDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_custom_key, null)
+        val etLabel = view.findViewById<EditText>(R.id.etCustomKeyLabel)
+        val cbCtrl = view.findViewById<CheckBox>(R.id.cbCustomCtrl)
+        val cbAlt = view.findViewById<CheckBox>(R.id.cbCustomAlt)
+        val cbShift = view.findViewById<CheckBox>(R.id.cbCustomShift)
+        val cbWin = view.findViewById<CheckBox>(R.id.cbCustomWin)
+        val spinner = view.findViewById<Spinner>(R.id.spinnerCustomKey)
+        spinner.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_dropdown_item, KeyCatalog.entries.map { it.first }
+        )
+
+        AlertDialog.Builder(this)
+            .setTitle("Custom key")
+            .setView(view)
+            .setPositiveButton("Save") { _, _ ->
+                val modifiers = listOfNotNull(
+                    Packet.VK.CONTROL.takeIf { cbCtrl.isChecked },
+                    Packet.VK.ALT.takeIf { cbAlt.isChecked },
+                    Packet.VK.SHIFT.takeIf { cbShift.isChecked },
+                    Packet.VK.LWIN.takeIf { cbWin.isChecked }
+                )
+                val (keyName, keyVk) = KeyCatalog.entries[spinner.selectedItemPosition]
+                val keys = modifiers + keyVk
+                val label = etLabel.text.toString().trim().ifEmpty {
+                    (modifiers.map { vkLabel(it) } + keyName).joinToString("+")
+                }
+                customKeys.add(CustomKey(label, keys))
+                CustomKeyStore.save(prefs, customKeys)
+                renderCustomKeys()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun vkLabel(vk: Int) = when (vk) {
+        Packet.VK.CONTROL -> "Ctrl"
+        Packet.VK.ALT -> "Alt"
+        Packet.VK.SHIFT -> "Shift"
+        Packet.VK.LWIN -> "Win"
+        else -> "0x%02X".format(vk)
     }
 
     private fun setupConfig() {

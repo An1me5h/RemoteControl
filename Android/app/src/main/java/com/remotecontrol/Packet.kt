@@ -1,5 +1,6 @@
 package com.remotecontrol
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** Mirrors the packet shapes RemoteControl.exe's PacketCodec understands. */
@@ -29,6 +30,22 @@ sealed class Packet {
     data class VkDown(val k: Int) : Packet() { override fun encode() = """{"t":"VKDOWN","k":$k}""" }
     data class VkUp(val k: Int) : Packet() { override fun encode() = """{"t":"VKUP","k":$k}""" }
     data class VkTap(val k: Int) : Packet() { override fun encode() = """{"t":"VKTAP","k":$k}""" }
+
+    /** A whole block of text typed on the phone's real keyboard, sent at once on Send
+     *  rather than one KEY packet per character. */
+    data class Text(val text: String) : Packet() {
+        override fun encode(): String =
+            JSONObject().put("t", "TEXT").put("text", text).toString()
+    }
+
+    /** Multiple VK codes pressed together as one real combo (e.g. Ctrl+T) - the PC presses
+     *  all of them down, then all up, in a single input batch, not a held-modifier-plus-
+     *  separate-tap sequence. Used by custom keys ([CustomKey]) and could be sent directly
+     *  for a one-off combo too. */
+    data class Combo(val keys: List<Int>) : Packet() {
+        override fun encode(): String =
+            JSONObject().put("t", "COMBO").put("keys", JSONArray(keys)).toString()
+    }
 
     /** Windows virtual-key codes used by the special-keys row and modifier combos. */
     object VK {
