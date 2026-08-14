@@ -1,8 +1,7 @@
 # RemoteControl
 
 Turn an Android phone into a wireless trackpad + keyboard for a Windows PC. Phone → PC
-only, over your local Wi-Fi network. Built from scratch (a ground-up rewrite, not related
-to the old `PhoneTrack` project).
+only, over your local Wi-Fi network. Built from scratch
 
 ```
 [Android phone]                                  [Windows PC]
