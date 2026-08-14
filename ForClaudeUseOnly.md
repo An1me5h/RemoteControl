@@ -9,8 +9,32 @@
 
 ## 0. Branch log
 
-Not a git repo yet (no `git init` run here) — no branches to log against. If this gets
-git-initialized later, start logging changes here per branch as work happens.
+Git repo since 2026-08-14 (GitHub: `https://github.com/An1me5h/RemoteControl`). Single
+branch, `main` - see the entry directly below for how that came to be and why `master`
+(mentioned in earlier entries further down) no longer exists.
+
+### 2026-08-14 — git repo set up, `main`/`master` merged, `master` deleted
+
+User had created the GitHub repo through the web UI (auto-generating an initial commit on
+`main`: a one-line placeholder `README.md` + an MIT `LICENSE`) separately from - and
+unaware of the divergence from - the local repo they'd `git init`'d and pushed as `master`
+(the actual project, all prior work in this file). Result: two branches with **no common
+ancestor** (`git merge-base` returned nothing; both `e33b2cc` on `main` and `6b1f3b91` at
+the root of `master` are true root commits with no parents).
+
+User asked to merge them, resolve conflicts, delete `master`. Merged `master` into `main`
+with `git merge master --allow-unrelated-histories`. Real conflict count: **one** -
+`README.md` (both sides added different content for the same new path). Resolved by
+keeping `master`'s real project README over `main`'s placeholder stub (`git checkout
+--theirs README.md`); every other path merged in cleanly since `main` never had them.
+`LICENSE` (MIT, from `main`) is now part of the repo with nothing further needed. Pushed
+`main` (plain fast-forward, no force needed - the merge commit has `origin/main`'s old tip
+as a direct parent). Deleted `master` both locally (`git branch -d`, safe delete since its
+tip was now an ancestor of `main`) and on the remote (`git push origin --delete master`).
+User later reported still seeing `origin/master` somewhere - confirmed via `git
+ls-remote --heads origin` and a pruned fetch that it's genuinely gone from both the local
+repo and GitHub itself; whatever they were looking at (IDE git panel, browser tab) was
+showing stale cached state, not a real leftover ref.
 
 ### 2026-08-14 — real multi-key combos + user-defined custom keys
 
