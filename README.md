@@ -78,7 +78,9 @@ below), "Copy address" to paste into the phone's CONFIG tab manually, or to Exit
 
 Right-click the tray icon → **Devices...** opens a real window showing which device is
 currently connected, an **Add New Device** button, and every device that's ever been
-trusted, with a **Forget selected device** button to revoke one.
+trusted, with a **Forget selected device** button to revoke one. Forgetting a device that's
+*currently connected* disconnects it immediately, not just on its next reconnect attempt —
+its session is severed the moment you click Forget.
 
 **Pairing is opt-in, not automatic.** An unrecognized phone trying to connect gets
 rejected outright unless you've explicitly clicked **Add New Device** in the Devices

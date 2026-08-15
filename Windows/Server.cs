@@ -15,6 +15,12 @@ class Server
     private CancellationTokenSource? _cts;
     private int _clientCount;
 
+    // The single currently-approved connection, if any - only one can ever exist thanks to
+    // PairingCoordinator's slot. Tracked so Forget can immediately sever a live session for
+    // a device that was just revoked, not just block its *next* reconnect attempt.
+    private volatile TcpClient? _connectedClient;
+    private volatile string? _connectedDeviceId;
+
     public event Action<int>? ClientCountChanged;
     public event Action<Packet>? PacketReceived;
     public event Action<string>? UndecodableLineReceived;
@@ -26,6 +32,21 @@ class Server
     public Server(PairingCoordinator pairing)
     {
         _pairing = pairing;
+        _pairing.DeviceForgotten += device =>
+        {
+            if (device.DeviceId == _connectedDeviceId) KickConnectedClient();
+        };
+    }
+
+    /// Forcibly closes the current live connection (if any) - called when the device
+    /// that's currently connected gets Forgotten. Closing the socket from here makes the
+    /// blocked `ReadLineAsync` in HandleClientAsync's dispatch loop throw/return
+    /// immediately, which drives it through the exact same cleanup path (release held
+    /// input, decrement count, fire DeviceDisconnected, release the pairing slot) as any
+    /// other disconnect - no separate cleanup logic needed.
+    private void KickConnectedClient()
+    {
+        try { _connectedClient?.Close(); } catch (Exception) { /* already closing/closed */ }
     }
 
     public void Start()
@@ -86,10 +107,13 @@ class Server
                 }
                 slotClaimed = true;
 
-                var deviceLabel = await PerformHandshakeAsync(reader, writer, token);
-                if (deviceLabel == null) return; // rejected/timed out - already reported via events
+                var handshakeResult = await PerformHandshakeAsync(reader, writer, token);
+                if (handshakeResult == null) return; // rejected/timed out - already reported via events
+                var (deviceLabel, deviceId) = handshakeResult.Value;
 
                 approved = true;
+                _connectedClient = client;
+                _connectedDeviceId = deviceId;
                 Interlocked.Increment(ref _clientCount);
                 ClientCountChanged?.Invoke(_clientCount);
                 DeviceConnected?.Invoke(deviceLabel);
@@ -140,6 +164,8 @@ class Server
             ReleaseHeldInput(heldVks, leftButtonDown);
             if (approved)
             {
+                _connectedClient = null;
+                _connectedDeviceId = null;
                 Interlocked.Decrement(ref _clientCount);
                 ClientCountChanged?.Invoke(_clientCount);
                 DeviceDisconnected?.Invoke();
@@ -152,9 +178,10 @@ class Server
     /// Expects a HELLO first; a recognized (DeviceId+Model+Build all matching a saved
     /// entry) device is welcomed immediately, silently, so normal reconnects stay seamless.
     /// An unrecognized device has to prove it knows a one-time code shown in the PC's
-    /// device window before it's trusted and saved. Returns a display label for the
-    /// approved device, or null if the handshake was rejected/abandoned/timed out.
-    private async Task<string?> PerformHandshakeAsync(StreamReader reader, StreamWriter writer, CancellationToken token)
+    /// device window before it's trusted and saved. Returns a display label and the
+    /// device's id for the approved device, or null if the handshake was
+    /// rejected/abandoned/timed out.
+    private async Task<(string Label, string DeviceId)?> PerformHandshakeAsync(StreamReader reader, StreamWriter writer, CancellationToken token)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
         cts.CancelAfter(TimeSpan.FromSeconds(PairingCoordinator.HandshakeTimeoutSeconds));
@@ -178,7 +205,7 @@ class Server
         if (_pairing.FindTrusted(hello.DeviceId!, hello.Model!, hello.Build!) != null)
         {
             await writer.WriteLineAsync("{\"t\":\"WELCOME\"}");
-            return label;
+            return (label, hello.DeviceId!);
         }
 
         // Not a recognized device - only allowed in if the user has explicitly opened
@@ -211,7 +238,7 @@ class Server
                 {
                     _pairing.Approve(hello.DeviceId!, hello.Model!, hello.Build!, hello.Name ?? hello.Model!);
                     await writer.WriteLineAsync("{\"t\":\"WELCOME\"}");
-                    return label;
+                    return (label, hello.DeviceId!);
                 }
 
                 int attemptsLeft = PairingCoordinator.MaxCodeAttempts - attempt;
