@@ -2,19 +2,28 @@ using System.Windows.Forms;
 
 namespace RemoteControl;
 
-/// No main window - just a tray icon. A hidden Form exists solely to give the
+/// No main window on the tray icon itself - a hidden Form exists solely to give the
 /// server's background-thread callbacks a UI-thread target to Invoke onto (for the
 /// NotifyIcon updates - Console.WriteLine needs no such marshaling, it's thread-safe).
+/// DeviceWindow is a real, visible window, opened from the tray menu or auto-shown when
+/// a new device needs a pairing code.
 class TrayApp : ApplicationContext
 {
     private readonly Form _hiddenWindow;
     private readonly NotifyIcon _icon;
+    private readonly PairingCoordinator _pairing;
     private readonly Server _server;
+    private readonly DeviceWindow _deviceWindow;
     private readonly ToolStripMenuItem _statusItem;
     private readonly string _localAddress;
     private readonly CancellationTokenSource _cts = new();
 
-    public TrayApp()
+    /// [foreground] is true when this process reattached to a launching terminal's console
+    /// (see Program.cs) - i.e. it was started from `dotnet run` or a shell, not by
+    /// double-clicking the exe or a Startup-folder/Task Scheduler entry. Only then do we
+    /// also pop the Devices window automatically; a true background start stays tray-only
+    /// until the user opens it themselves.
+    public TrayApp(bool foreground)
     {
         _hiddenWindow = new Form { ShowInTaskbar = false, Opacity = 0, FormBorderStyle = FormBorderStyle.FixedToolWindow };
         _hiddenWindow.Load += (_, _) => _hiddenWindow.Hide();
@@ -24,14 +33,25 @@ class TrayApp : ApplicationContext
         Console.WriteLine($"RemoteControl listening on {_localAddress}:{Server.Port} (TCP) and UDP {Discovery.Port} (discovery)");
         Console.WriteLine("Waiting for a phone to connect...");
 
+        _pairing = new PairingCoordinator();
+        _deviceWindow = new DeviceWindow(_pairing);
+        if (foreground) _deviceWindow.Show();
+
         _statusItem = new ToolStripMenuItem(StatusText(0)) { Enabled = false };
         var copyItem = new ToolStripMenuItem("Copy address", null, (_, _) =>
             Clipboard.SetText($"{_localAddress}:{Server.Port}"));
+        var devicesItem = new ToolStripMenuItem("Devices...", null, (_, _) =>
+        {
+            _deviceWindow.Show();
+            _deviceWindow.WindowState = FormWindowState.Normal;
+            _deviceWindow.BringToFront();
+        });
         var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => ExitThread());
 
         var menu = new ContextMenuStrip();
         menu.Items.Add(_statusItem);
         menu.Items.Add(copyItem);
+        menu.Items.Add(devicesItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(exitItem);
 
@@ -43,16 +63,34 @@ class TrayApp : ApplicationContext
             ContextMenuStrip = menu
         };
 
-        _server = new Server();
+        _server = new Server(_pairing);
         _server.ClientCountChanged += OnClientCountChanged;
-        _server.ClientCountChanged += count => Console.WriteLine(count > 0
-            ? $"[{Now()}] Client connected. {count} connected."
-            : $"[{Now()}] Client disconnected. {count} connected.");
+        _server.DeviceConnected += label =>
+        {
+            _deviceWindow.ShowConnected(label);
+            Console.WriteLine($"[{Now()}] Connected: {label}");
+        };
+        _server.DeviceDisconnected += () =>
+        {
+            _deviceWindow.ShowDisconnected();
+            Console.WriteLine($"[{Now()}] Device disconnected.");
+        };
+        _server.ConnectionRejected += reason => Console.WriteLine($"[{Now()}] Connection rejected: {reason}");
         _server.PacketReceived += p => Console.WriteLine($"[{Now()}] {PacketFormat.Describe(p)}");
         _server.UndecodableLineReceived += line => Console.WriteLine($"[{Now()}] ?? unrecognized: {line}");
         _server.HeldInputReleased += (vkCount, mouseReleased) => Console.WriteLine(
             $"[{Now()}] Client disconnected while holding input - released {vkCount} key(s)" +
             (mouseReleased ? " and the left mouse button." : "."));
+
+        _pairing.PairingCodeGenerated += (code, model) =>
+        {
+            _deviceWindow.ShowPairingCode(code, model);
+            Console.WriteLine($"[{Now()}] Pairing code for {model}: {code}");
+        };
+        _pairing.PairingEnded += () => _deviceWindow.HidePairingCode();
+        _pairing.DeviceApproved += device => Console.WriteLine($"[{Now()}] Paired and trusted: {device.Name}");
+        _pairing.DeviceForgotten += device => Console.WriteLine($"[{Now()}] Forgot device: {device.Name}");
+
         _server.Start();
 
         Discovery.StartResponder(Server.Port, _cts.Token);
@@ -88,6 +126,7 @@ class TrayApp : ApplicationContext
         _server.Stop();
         _icon.Visible = false;
         _icon.Dispose();
+        _deviceWindow.Dispose();
         _hiddenWindow.Close();
         base.ExitThreadCore();
     }

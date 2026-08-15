@@ -7,7 +7,8 @@ namespace RemoteControl;
 enum PacketType
 {
     Move, Scroll, LClick, RClick, MClick, LDown, LUp,
-    Key, VkDown, VkUp, VkTap, Text, Combo, Ping, Unknown
+    Key, VkDown, VkUp, VkTap, Text, Combo, Ping,
+    Hello, PairCode, Unknown
 }
 
 readonly record struct Packet(
@@ -18,7 +19,12 @@ readonly record struct Packet(
     char Ch = '\0',
     int K = 0,
     string? Text = null,
-    int[]? Keys = null);
+    int[]? Keys = null,
+    string? DeviceId = null,
+    string? Model = null,
+    string? Build = null,
+    string? Name = null,
+    string? Code = null);
 
 static class PacketCodec
 {
@@ -48,6 +54,8 @@ static class PacketCodec
                 "TEXT" => PacketType.Text,
                 "COMBO" => PacketType.Combo,
                 "PING" => PacketType.Ping,
+                "HELLO" => PacketType.Hello,
+                "PAIRCODE" => PacketType.PairCode,
                 _ => PacketType.Unknown
             };
             if (type == PacketType.Unknown) return null;
@@ -72,7 +80,13 @@ static class PacketCodec
                 keys = keysP.EnumerateArray().Select(e => e.GetInt32()).ToArray();
             }
 
-            return new Packet(type, dx, dy, d, ch, k, text, keys);
+            string? deviceId = root.TryGetProperty("deviceId", out var idP) ? idP.GetString() : null;
+            string? model = root.TryGetProperty("model", out var modelP) ? modelP.GetString() : null;
+            string? build = root.TryGetProperty("build", out var buildP) ? buildP.GetString() : null;
+            string? name = root.TryGetProperty("name", out var nameP) ? nameP.GetString() : null;
+            string? code = root.TryGetProperty("code", out var codeP) ? codeP.GetString() : null;
+
+            return new Packet(type, dx, dy, d, ch, k, text, keys, deviceId, model, build, name, code);
         }
         catch (JsonException)
         {

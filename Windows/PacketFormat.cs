@@ -26,6 +26,8 @@ static class PacketFormat
         PacketType.Text => DescribeText(p),
         PacketType.Combo => DescribeCombo(p),
         PacketType.Ping => "PING",
+        PacketType.Hello => $"HELLO    {p.Name ?? p.Model} ({p.Model}, build {p.Build}, id {p.DeviceId})",
+        PacketType.PairCode => "PAIRCODE (code hidden from the log)",
         _ => p.Type.ToString()
     };
 

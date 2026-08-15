@@ -4,12 +4,14 @@ using System.Text;
 
 namespace RemoteControl;
 
-/// Newline-delimited JSON over TCP, phone -> PC. One thread per connected client.
+/// Newline-delimited JSON over TCP, phone -> PC. One thread per connected client, but only
+/// one client is ever actually let through the handshake at a time - see PairingCoordinator.
 class Server
 {
     public const int Port = 5201;
 
     private readonly TcpListener _listener = new(IPAddress.Any, Port);
+    private readonly PairingCoordinator _pairing;
     private CancellationTokenSource? _cts;
     private int _clientCount;
 
@@ -17,6 +19,14 @@ class Server
     public event Action<Packet>? PacketReceived;
     public event Action<string>? UndecodableLineReceived;
     public event Action<int, bool>? HeldInputReleased;
+    public event Action<string>? DeviceConnected;
+    public event Action? DeviceDisconnected;
+    public event Action<string>? ConnectionRejected;
+
+    public Server(PairingCoordinator pairing)
+    {
+        _pairing = pairing;
+    }
 
     public void Start()
     {
@@ -51,11 +61,9 @@ class Server
     private async Task HandleClientAsync(TcpClient client, CancellationToken token)
     {
         client.NoDelay = true;
-        Interlocked.Increment(ref _clientCount);
-        ClientCountChanged?.Invoke(_clientCount);
 
-        // Tracks input this client left "down" (a held key, a mouse button mid-drag) so it
-        // can be released the moment the connection ends, no matter why. See ReleaseHeldInput.
+        bool slotClaimed = false;
+        bool approved = false;
         var heldVks = new HashSet<int>();
         bool leftButtonDown = false;
 
@@ -64,8 +72,28 @@ class Server
             using (client)
             using (var stream = client.GetStream())
             using (var reader = new StreamReader(stream, Encoding.UTF8))
-            using (var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true, NewLine = "\n" })
+            // Encoding.UTF8 (not new UTF8Encoding(false)) writes a BOM before the first
+            // byte of each new connection - harmless to `line.contains("PONG")` but breaks
+            // real JSON parsing (JSONObject(line)) on the handshake replies the Android
+            // side needs to actually parse, so it has to be the BOM-less encoding here.
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" })
             {
+                if (!_pairing.TryClaimSlot())
+                {
+                    await writer.WriteLineAsync("{\"t\":\"REJECTED\",\"reason\":\"busy\"}");
+                    ConnectionRejected?.Invoke("busy (another device is already connected)");
+                    return;
+                }
+                slotClaimed = true;
+
+                var deviceLabel = await PerformHandshakeAsync(reader, writer, token);
+                if (deviceLabel == null) return; // rejected/timed out - already reported via events
+
+                approved = true;
+                Interlocked.Increment(ref _clientCount);
+                ClientCountChanged?.Invoke(_clientCount);
+                DeviceConnected?.Invoke(deviceLabel);
+
                 while (!token.IsCancellationRequested)
                 {
                     string? line = await reader.ReadLineAsync(token);
@@ -110,8 +138,85 @@ class Server
         finally
         {
             ReleaseHeldInput(heldVks, leftButtonDown);
-            Interlocked.Decrement(ref _clientCount);
-            ClientCountChanged?.Invoke(_clientCount);
+            if (approved)
+            {
+                Interlocked.Decrement(ref _clientCount);
+                ClientCountChanged?.Invoke(_clientCount);
+                DeviceDisconnected?.Invoke();
+            }
+            if (slotClaimed) _pairing.ReleaseSlot();
+        }
+    }
+
+    /// Every connection goes through this before a single input packet is ever dispatched.
+    /// Expects a HELLO first; a recognized (DeviceId+Model+Build all matching a saved
+    /// entry) device is welcomed immediately, silently, so normal reconnects stay seamless.
+    /// An unrecognized device has to prove it knows a one-time code shown in the PC's
+    /// device window before it's trusted and saved. Returns a display label for the
+    /// approved device, or null if the handshake was rejected/abandoned/timed out.
+    private async Task<string?> PerformHandshakeAsync(StreamReader reader, StreamWriter writer, CancellationToken token)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+        cts.CancelAfter(TimeSpan.FromSeconds(PairingCoordinator.HandshakeTimeoutSeconds));
+
+        string? line;
+        try { line = await reader.ReadLineAsync(cts.Token); }
+        catch (OperationCanceledException) { ConnectionRejected?.Invoke("handshake timed out waiting for HELLO"); return null; }
+        if (line == null) return null;
+
+        var packet = PacketCodec.Decode(line);
+        if (packet is not { Type: PacketType.Hello, DeviceId: not null, Model: not null, Build: not null })
+        {
+            await writer.WriteLineAsync("{\"t\":\"REJECTED\",\"reason\":\"bad_hello\"}");
+            ConnectionRejected?.Invoke("sent something other than a valid HELLO first");
+            return null;
+        }
+
+        var hello = packet.Value;
+        string label = $"{hello.Name ?? hello.Model} ({hello.Model})";
+
+        if (_pairing.FindTrusted(hello.DeviceId!, hello.Model!, hello.Build!) != null)
+        {
+            await writer.WriteLineAsync("{\"t\":\"WELCOME\"}");
+            return label;
+        }
+
+        // Not a recognized device - pair it.
+        string code = _pairing.GenerateCode();
+        _pairing.NotifyPairingStarted(code, hello.Model!);
+        await writer.WriteLineAsync("{\"t\":\"PAIRREQUIRED\"}");
+
+        try
+        {
+            for (int attempt = 1; attempt <= PairingCoordinator.MaxCodeAttempts; attempt++)
+            {
+                string? codeLine;
+                try { codeLine = await reader.ReadLineAsync(cts.Token); }
+                catch (OperationCanceledException) { ConnectionRejected?.Invoke("pairing timed out"); return null; }
+                if (codeLine == null) return null;
+
+                var codePacket = PacketCodec.Decode(codeLine);
+                if (codePacket is { Type: PacketType.PairCode } && codePacket.Value.Code == code)
+                {
+                    _pairing.Approve(hello.DeviceId!, hello.Model!, hello.Build!, hello.Name ?? hello.Model!);
+                    await writer.WriteLineAsync("{\"t\":\"WELCOME\"}");
+                    return label;
+                }
+
+                int attemptsLeft = PairingCoordinator.MaxCodeAttempts - attempt;
+                if (attemptsLeft > 0)
+                {
+                    await writer.WriteLineAsync($"{{\"t\":\"WRONGCODE\",\"attemptsLeft\":{attemptsLeft}}}");
+                }
+            }
+
+            await writer.WriteLineAsync("{\"t\":\"REJECTED\",\"reason\":\"wrong_code\"}");
+            ConnectionRejected?.Invoke($"wrong pairing code entered {PairingCoordinator.MaxCodeAttempts} times ({label})");
+            return null;
+        }
+        finally
+        {
+            _pairing.NotifyPairingEnded();
         }
     }
 

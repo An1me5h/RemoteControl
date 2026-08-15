@@ -48,8 +48,33 @@ Waiting for a phone to connect...
 couldn't be parsed shows up as `?? unrecognized: <raw line>` instead of silently
 vanishing — see "If input doesn't seem to reach the PC" below for how to read this log
 when things aren't working. A tray icon also appears alongside the console (gray dot =
-idle, green = a phone is connected) — right-click it for the PC's address, or "Copy
-address" to paste into the phone's CONFIG tab manually, or to Exit.
+idle, green = a phone is connected) — right-click it for the PC's address, "Devices..."
+to open the Devices window (see below), "Copy address" to paste into the phone's CONFIG
+tab manually, or to Exit.
+
+## Pairing and the Devices window
+
+Right-click the tray icon → **Devices...** opens a real window showing which device is
+currently connected, any in-progress pairing code, and every device that's ever been
+trusted, with a **Forget selected device** button to revoke one.
+
+**First connection from a new phone**: the PC doesn't recognize it, so it generates a
+random 6-digit code, shows it in the Devices window (which pops to the front
+automatically so you don't miss it), and the phone asks for that code before it's
+allowed to send any input. Enter it on the phone within 5 wrong attempts / 2 minutes,
+and the PC remembers that device (by Android ID + model + build number, not just an IP)
+for every future connection — no code needed again unless you Forget it.
+
+**Only one device controls the PC at a time.** The moment any phone starts connecting —
+recognized or not — the PC claims an internal slot and refuses every other connection
+attempt with a "busy" rejection until that one ends. A second phone (or a laptop's
+browser probing the port, or anything else on the LAN) can't interleave input with
+whoever's already connected, and can't even attempt to pair while someone else is.
+
+This means someone else on the same Wi-Fi network can no longer connect to and operate
+this PC just by knowing (or scanning for) its IP: they'd need to either already be a
+trusted device, or type a code that only appears on your own screen at the moment you
+approve them.
 
 **Elevated windows**: `RemoteControl.exe` runs at normal (`asInvoker`) privilege, so by
 Windows' own UIPI rules it cannot send input into a window owned by an elevated process
@@ -143,6 +168,18 @@ Newline-delimited JSON, phone → PC, TCP port 5201:
 | `{"t":"COMBO","keys":[..]}` | press multiple virtual-keys together as one atomic combo (custom keys) |
 | `{"t":"PING"}` | PC replies `{"t":"PONG"}` — used for the latency readout |
 
+Pairing handshake (also newline-delimited JSON, same TCP connection, happens once before
+any of the packets above are accepted):
+
+| Packet | Direction | Meaning |
+|---|---|---|
+| `{"t":"HELLO","deviceId":..,"model":..,"build":..,"name":..}` | phone → PC | first thing sent on every connection, identifies the phone |
+| `{"t":"WELCOME"}` | PC → phone | recognized (or just-paired) device, connection is live |
+| `{"t":"PAIRREQUIRED"}` | PC → phone | unrecognized device — phone should show a code-entry prompt |
+| `{"t":"PAIRCODE","code":".."}` | phone → PC | the code the user typed in, in response to `PAIRREQUIRED`/`WRONGCODE` |
+| `{"t":"WRONGCODE","attemptsLeft":..}` | PC → phone | code didn't match, try again |
+| `{"t":"REJECTED","reason":".."}` | PC → phone | handshake failed for good (`busy`, `wrong_code`, `bad_hello`) — connection is about to close |
+
 UDP port 58201, discovery only: phone broadcasts `RC_DISCOVER`, PC replies
 `RC_HOST <ip> <tcp-port>` directly to the sender. This is a custom protocol, not real
 mDNS/Bonjour — it doesn't touch the 224.0.0.251:5353 multicast group, so it can't
@@ -172,9 +209,11 @@ Disconnect from the CONFIG tab clears the queue instead of replaying it later.
 
 ## Known limitations
 
-- One phone at a time is the intended use case; the server will technically accept
-  multiple TCP connections but their input just interleaves.
-- No pairing/auth — anyone on the same LAN who knows (or discovers) the IP can send
-  input. Fine for a home network; don't run this on an untrusted network.
+- One device controls the PC at a time by design (see "Pairing and the Devices window"
+  above) — a second connection attempt is rejected outright, not interleaved.
+- Pairing trusts a *device*, not a *person*: anyone with physical access to an already-
+  trusted phone can control the PC, and the 6-digit code is only as secret as whoever can
+  see the PC's screen at the moment it's shown. Fine for a home network among people you
+  live with; it's not multi-user access control.
 - `Ctrl`/`Alt`/`Shift`/`Win` combos only work for letters and digits (their Windows
   virtual-key codes are layout-independent); symbol combos aren't supported.

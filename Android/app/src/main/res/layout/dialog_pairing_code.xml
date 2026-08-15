@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <EditText
+        android:id="@+id/etPairingCode"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="123456"
+        android:inputType="number"
+        android:maxLength="6"
+        android:gravity="center"
+        android:textSize="24sp"
+        android:letterSpacing="0.3"
+        android:textColor="@color/text_primary"
+        android:textColorHint="@color/text_secondary" />
+
+    <TextView
+        android:id="@+id/pairingErrorText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:textColor="#e5484d"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+</LinearLayout>

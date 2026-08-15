@@ -65,12 +65,14 @@ class MainActivity : AppCompatActivity() {
     private val customKeys = mutableListOf<CustomKey>()
     private val savedDevices = mutableListOf<SavedDevice>()
 
+    private var pairingDialog: AlertDialog? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         prefs = getSharedPreferences("remotecontrol", MODE_PRIVATE)
-        conn = ConnectionManager()
+        conn = ConnectionManager(applicationContext)
 
         bindViews()
         setupTabs()
@@ -530,6 +532,53 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    /** Shown when the PC doesn't recognize this device and needs a one-time code. Stays
+     *  open across wrong attempts (the positive button's default dismiss-on-click is
+     *  overridden via setOnShowListener) so the user can just retry without re-opening it;
+     *  only [dismissPairingDialog] (on success or give-up, via `onPairingEnded`) actually
+     *  closes it. Cancel disconnects outright rather than leaving a half-finished
+     *  handshake for `connectLoop` to keep blocking on. */
+    private fun showPairingDialog(pcLabel: String) {
+        if (pairingDialog?.isShowing == true) return
+
+        val view = layoutInflater.inflate(R.layout.dialog_pairing_code, null)
+        val etCode = view.findViewById<EditText>(R.id.etPairingCode)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Pair with $pcLabel")
+            .setMessage("Enter the code shown on the PC's screen.")
+            .setView(view)
+            .setPositiveButton("Submit", null)
+            .setNegativeButton("Cancel") { _, _ -> conn.disconnect() }
+            .setCancelable(false)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val code = etCode.text.toString().trim()
+                if (code.isNotEmpty()) {
+                    view.findViewById<TextView>(R.id.pairingErrorText).visibility = View.GONE
+                    conn.submitPairingCode(code)
+                }
+            }
+        }
+
+        dialog.show()
+        pairingDialog = dialog
+    }
+
+    private fun showPairingError(message: String) {
+        pairingDialog?.findViewById<TextView>(R.id.pairingErrorText)?.apply {
+            text = message
+            visibility = View.VISIBLE
+        }
+    }
+
+    private fun dismissPairingDialog() {
+        pairingDialog?.dismiss()
+        pairingDialog = null
+    }
+
     private fun setupConnection() {
         conn.onStateChanged = { state ->
             val (drawable, text) = when (state) {
@@ -554,6 +603,11 @@ class MainActivity : AppCompatActivity() {
             latencyText.visibility = View.VISIBLE
             latencyText.text = "${rtt}ms"
         }
+        conn.onPairingRequired = { pcLabel -> showPairingDialog(pcLabel) }
+        conn.onPairingWrongCode = { attemptsLeft ->
+            showPairingError("Wrong code - $attemptsLeft attempt(s) left")
+        }
+        conn.onPairingEnded = { dismissPairingDialog() }
 
         btnConnect.setOnClickListener {
             if (btnConnect.text == "Connect") {

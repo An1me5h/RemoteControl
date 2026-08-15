@@ -47,6 +47,24 @@ sealed class Packet {
             JSONObject().put("t", "COMBO").put("keys", JSONArray(keys)).toString()
     }
 
+    /** First thing sent on every connection, before anything else - see PairingCoordinator
+     *  on the Windows side. Identifies this phone install so the PC can recognize it on
+     *  future connections without re-pairing. */
+    data class Hello(val deviceId: String, val model: String, val build: String, val name: String) : Packet() {
+        override fun encode(): String = JSONObject()
+            .put("t", "HELLO")
+            .put("deviceId", deviceId)
+            .put("model", model)
+            .put("build", build)
+            .put("name", name)
+            .toString()
+    }
+
+    /** Answers a PAIRREQUIRED from the PC with the code the user typed in. */
+    data class PairCode(val code: String) : Packet() {
+        override fun encode(): String = JSONObject().put("t", "PAIRCODE").put("code", code).toString()
+    }
+
     /** Windows virtual-key codes used by the special-keys row and modifier combos. */
     object VK {
         const val BACK = 0x08

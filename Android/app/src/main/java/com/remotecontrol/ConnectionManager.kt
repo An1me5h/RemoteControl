@@ -1,8 +1,10 @@
 package com.remotecontrol
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.PrintWriter
@@ -14,10 +16,14 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** TCP client to RemoteControl.exe: connect/reconnect, UDP discovery, and PING/PONG latency. */
-class ConnectionManager {
+/** TCP client to RemoteControl.exe: connect/reconnect, UDP discovery, pairing handshake,
+ *  and PING/PONG latency. [context] is only used to read [DeviceIdentity.id] -
+ *  applicationContext, so it can't leak an Activity. */
+class ConnectionManager(private val context: Context) {
 
     enum class State { DISCONNECTED, CONNECTING, CONNECTED }
 
@@ -38,11 +44,32 @@ class ConnectionManager {
         /** Pace for replaying the backlog after reconnecting - the PC gets one packet
          *  every this-many ms instead of the whole backlog in one burst. */
         const val DRAIN_INTERVAL_MS = 10L
+
+        /** How long to wait for the PC's first handshake reply (WELCOME/PAIRREQUIRED/
+         *  REJECTED) - this should be near-instant, so a short timeout is fine. */
+        const val HANDSHAKE_REPLY_TIMEOUT_MS = 10_000
+
+        /** How long to wait for the *user* to type a pairing code before giving up - has
+         *  to be generous. Kept a little under the PC's own 120s handshake budget
+         *  (PairingCoordinator.HandshakeTimeoutSeconds) so this side times out first with
+         *  a clear message, rather than submitting a code to a connection the PC already
+         *  dropped. */
+        const val PAIRING_CODE_WAIT_MS = 110_000L
     }
 
     var onStateChanged: ((State) -> Unit)? = null
     var onLog: ((String) -> Unit)? = null
     var onLatency: ((Long) -> Unit)? = null
+
+    /** Fired when the PC doesn't recognize this device and needs a pairing code, with the
+     *  PC's own display name/model for context. Answer with [submitPairingCode]. */
+    var onPairingRequired: ((pcLabel: String) -> Unit)? = null
+
+    /** Fired when a submitted code was wrong; still waiting for another attempt. */
+    var onPairingWrongCode: ((attemptsLeft: Int) -> Unit)? = null
+
+    /** Fired when pairing finished (success or failure) - dismiss any code-entry UI. */
+    var onPairingEnded: (() -> Unit)? = null
 
     var currentHost: String? = null
         private set
@@ -60,6 +87,10 @@ class ConnectionManager {
     @Volatile private var writer: PrintWriter? = null
     private var lastPingSentAt = 0L
 
+    /** Bridges the pairing-code dialog (runs on the UI thread) back to connectLoop's
+     *  background thread, which blocks waiting for whatever the user submits. */
+    private val pairingCodeQueue = LinkedBlockingQueue<String>()
+
     /** Packets that couldn't be sent yet - either never connected, or connected but still
      *  draining a backlog from before. Replayed in order once the drain loop gets to them. */
     private val offlineQueue = ConcurrentLinkedQueue<Packet>()
@@ -75,6 +106,12 @@ class ConnectionManager {
         offlineQueue.clear() // user-initiated - the backlog is no longer relevant
         closeSocket()
         setState(State.DISCONNECTED)
+    }
+
+    /** Called from the UI thread when the user submits a code typed into the pairing
+     *  dialog. Whatever's waiting in [performHandshake] picks it up from the queue. */
+    fun submitPairingCode(code: String) {
+        pairingCodeQueue.offer(code)
     }
 
     /** Callable from any thread, including the UI thread (trackpad/keyboard call this
@@ -154,12 +191,23 @@ class ConnectionManager {
                 s.connect(InetSocketAddress(target, port), CONNECT_TIMEOUT_MS)
                 socket = s
                 currentHost = target
-                writer = PrintWriter(s.getOutputStream(), true)
+                val reader = BufferedReader(InputStreamReader(s.getInputStream()))
+                val handshakeWriter = PrintWriter(s.getOutputStream(), true)
+
+                if (!performHandshake(s, reader, handshakeWriter)) {
+                    // Rejected/timed out/abandoned - already logged. Treat like any other
+                    // failed connection attempt: fall through to the reconnect sleep below.
+                    closeSocket()
+                    if (running.get()) sleep(RECONNECT_DELAY_MS)
+                    continue
+                }
+
+                writer = handshakeWriter
                 setState(State.CONNECTED)
                 log("Connected to $target:$port")
                 if (offlineQueue.isNotEmpty()) log("Replaying ${offlineQueue.size} queued packet(s)")
                 drainOfflineQueue()
-                readLoop(s)
+                readLoop(s, reader)
                 if (running.get()) log("Disconnected")
             } catch (e: Exception) {
                 if (running.get()) log("Connection error: ${e.message}")
@@ -172,10 +220,97 @@ class ConnectionManager {
         setState(State.DISCONNECTED)
     }
 
+    /** Sends HELLO and handles whatever the PC asks for next: WELCOME (done), REJECTED
+     *  (done, failed), or PAIRREQUIRED (blocks this thread on [pairingCodeQueue] until the
+     *  UI submits a code, loops on WRONGCODE). Returns true only on WELCOME. Runs entirely
+     *  on the connectLoop background thread - the blocking wait for a UI-driven pairing
+     *  code is exactly what [pairingCodeQueue] bridges. */
+    private fun performHandshake(s: Socket, reader: BufferedReader, writer: PrintWriter): Boolean {
+        val hello = Packet.Hello(
+            deviceId = DeviceIdentity.id(context),
+            model = DeviceIdentity.model,
+            build = DeviceIdentity.buildNumber,
+            name = DeviceIdentity.model
+        )
+        writer.println(hello.encode())
+
+        s.soTimeout = HANDSHAKE_REPLY_TIMEOUT_MS
+        var reply = readHandshakeMessage(reader) ?: run {
+            log("No response from PC during handshake")
+            return false
+        }
+
+        when (reply.optString("t")) {
+            "WELCOME" -> return true
+            "REJECTED" -> {
+                log("Connection rejected: ${describeRejection(reply.optString("reason"))}")
+                return false
+            }
+            "PAIRREQUIRED" -> { /* fall through to the pairing loop below */ }
+            else -> {
+                log("Unexpected handshake reply: ${reply.optString("t")}")
+                return false
+            }
+        }
+
+        mainHandler.post { onPairingRequired?.invoke("this PC") }
+        try {
+            while (true) {
+                val code = pairingCodeQueue.poll(PAIRING_CODE_WAIT_MS, TimeUnit.MILLISECONDS)
+                if (code == null) {
+                    log("Pairing timed out waiting for a code")
+                    return false
+                }
+
+                writer.println(Packet.PairCode(code).encode())
+                reply = readHandshakeMessage(reader) ?: run {
+                    log("Connection lost during pairing")
+                    return false
+                }
+
+                when (reply.optString("t")) {
+                    "WELCOME" -> return true
+                    "WRONGCODE" -> {
+                        val attemptsLeft = reply.optInt("attemptsLeft", 0)
+                        mainHandler.post { onPairingWrongCode?.invoke(attemptsLeft) }
+                    }
+                    "REJECTED" -> {
+                        log("Pairing rejected: ${describeRejection(reply.optString("reason"))}")
+                        return false
+                    }
+                    else -> {
+                        log("Unexpected pairing reply: ${reply.optString("t")}")
+                        return false
+                    }
+                }
+            }
+        } finally {
+            mainHandler.post { onPairingEnded?.invoke() }
+        }
+    }
+
+    private fun readHandshakeMessage(reader: BufferedReader): JSONObject? {
+        return try {
+            val line = reader.readLine() ?: return null
+            JSONObject(line)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun describeRejection(reason: String) = when (reason) {
+        "busy" -> "another device is already connected to this PC"
+        "wrong_code" -> "wrong pairing code entered too many times"
+        "bad_hello" -> "the PC didn't understand this app's handshake (version mismatch?)"
+        "" -> "no reason given"
+        else -> reason
+    }
+
     /** Reads PONG replies and paces PING sends every [PING_INTERVAL_MS]. Returns on clean EOF
-     *  or throws on a real socket error, both of which send [connectLoop] back to reconnect. */
-    private fun readLoop(s: Socket) {
-        val reader = BufferedReader(InputStreamReader(s.getInputStream()))
+     *  or throws on a real socket error, both of which send [connectLoop] back to reconnect.
+     *  Takes the same [reader] the handshake used - creating a second BufferedReader on the
+     *  same stream here would risk losing bytes already sitting in the first one's buffer. */
+    private fun readLoop(s: Socket, reader: BufferedReader) {
         var nextPing = System.currentTimeMillis()
         while (running.get() && !s.isClosed) {
             val now = System.currentTimeMillis()
