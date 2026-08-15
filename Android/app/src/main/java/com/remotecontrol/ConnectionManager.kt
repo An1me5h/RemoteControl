@@ -55,6 +55,11 @@ class ConnectionManager(private val context: Context) {
          *  a clear message, rather than submitting a code to a connection the PC already
          *  dropped. */
         const val PAIRING_CODE_WAIT_MS = 110_000L
+
+        /** How often [waitForPairingCode] wakes up to recheck `running` - keeps a stale
+         *  handshake from blocking (and holding the PC's connection slot) for anywhere
+         *  near the full [PAIRING_CODE_WAIT_MS] after a `disconnect()` call. */
+        const val PAIRING_CODE_POLL_SLICE_MS = 500L
     }
 
     var onStateChanged: ((State) -> Unit)? = null
@@ -244,6 +249,10 @@ class ConnectionManager(private val context: Context) {
             "WELCOME" -> return true
             "REJECTED" -> {
                 log("Connection rejected: ${describeRejection(reply.optString("reason"))}")
+                // Rejected before ever reaching the pairing loop below (e.g. "busy", or
+                // pairing isn't open) - onPairingEnded still needs to fire so a scanned
+                // QR code stashed for this attempt doesn't linger for some later one.
+                mainHandler.post { onPairingEnded?.invoke() }
                 return false
             }
             "PAIRREQUIRED" -> { /* fall through to the pairing loop below */ }
@@ -256,9 +265,9 @@ class ConnectionManager(private val context: Context) {
         mainHandler.post { onPairingRequired?.invoke("this PC") }
         try {
             while (true) {
-                val code = pairingCodeQueue.poll(PAIRING_CODE_WAIT_MS, TimeUnit.MILLISECONDS)
+                val code = waitForPairingCode()
                 if (code == null) {
-                    log("Pairing timed out waiting for a code")
+                    if (running.get()) log("Pairing timed out waiting for a code")
                     return false
                 }
 
@@ -289,6 +298,23 @@ class ConnectionManager(private val context: Context) {
         }
     }
 
+    /** Waits for a code from [pairingCodeQueue] in short slices instead of one long
+     *  [PAIRING_CODE_WAIT_MS]-ms blocking poll, so a `disconnect()` call (e.g. from
+     *  scanning a fresh QR while a previous attempt is still stuck waiting on a code that
+     *  will never come) is noticed within [PAIRING_CODE_POLL_SLICE_MS] instead of the
+     *  stale attempt sitting there - and holding the PC's one connection slot - for up to
+     *  110 seconds. Returns null on either a real timeout or `running` going false. */
+    private fun waitForPairingCode(): String? {
+        val deadline = System.currentTimeMillis() + PAIRING_CODE_WAIT_MS
+        while (running.get() && System.currentTimeMillis() < deadline) {
+            val remaining = (deadline - System.currentTimeMillis()).coerceAtLeast(0L)
+            val slice = remaining.coerceAtMost(PAIRING_CODE_POLL_SLICE_MS)
+            val code = pairingCodeQueue.poll(slice, TimeUnit.MILLISECONDS)
+            if (code != null) return code
+        }
+        return null
+    }
+
     private fun readHandshakeMessage(reader: BufferedReader): JSONObject? {
         return try {
             val line = reader.readLine() ?: return null
@@ -302,6 +328,7 @@ class ConnectionManager(private val context: Context) {
         "busy" -> "another device is already connected to this PC"
         "wrong_code" -> "wrong pairing code entered too many times"
         "bad_hello" -> "the PC didn't understand this app's handshake (version mismatch?)"
+        "pairing_closed" -> "pairing isn't open on this PC right now - ask its owner to click 'Add New Device'"
         "" -> "no reason given"
         else -> reason
     }

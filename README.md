@@ -12,9 +12,11 @@ only, over your local Wi-Fi network. Built from scratch
 
 ## What's in this folder
 
-- `Windows/` — C# .NET 8 console + tray app (`RemoteControl.exe`). Prints every packet
-  it receives to the console it was launched from, and also sits in the system tray.
-  Listens on TCP 5201 for input packets and UDP 58201 for auto-discovery.
+- `Windows/` — C# .NET 8 tray app (`RemoteControl.exe`). Sits in the system tray and
+  listens on TCP 5201 for input packets and UDP 58201 for auto-discovery. Launched from a
+  terminal, it also prints a live packet log there and pops the Devices window; launched
+  by double-click (or a Startup-folder shortcut), it runs silently in the background with
+  just the tray icon — see "Running the Windows side" below.
 - `Android/` — Kotlin app (Gradle project, package `com.remotecontrol`). Trackpad +
   on-screen keyboard, CONTROL/CONFIG tabs, auto-reconnect.
 - `RemoteControl-debug.apk` — prebuilt debug APK, sideloadable as-is.
@@ -32,9 +34,16 @@ Or build a standalone exe:
 dotnet publish -c Release -r win-x64 --self-contained false
 ```
 
-The terminal you ran `dotnet run` in shows a live log of everything the server does —
-the address it's listening on, every client connect/disconnect, and every packet as it
-arrives:
+For a single file that runs on a PC with no .NET installed at all (e.g. to hand to a
+friend), publish self-contained instead:
+
+```powershell
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+```
+
+**Launched from a terminal** (`dotnet run`, or running the exe directly from an open
+cmd/PowerShell window), it reattaches to that terminal and prints a live log of
+everything the server does, and also pops the Devices window automatically:
 
 ```
 RemoteControl listening on 192.168.178.125:5201 (TCP) and UDP 58201 (discovery)
@@ -47,23 +56,40 @@ Waiting for a phone to connect...
 `MOVE` lines show both the raw `dx/dy` and a magnitude+angle vector. Anything that
 couldn't be parsed shows up as `?? unrecognized: <raw line>` instead of silently
 vanishing — see "If input doesn't seem to reach the PC" below for how to read this log
-when things aren't working. A tray icon also appears alongside the console (gray dot =
-idle, green = a phone is connected) — right-click it for the PC's address, "Devices..."
-to open the Devices window (see below), "Copy address" to paste into the phone's CONFIG
-tab manually, or to Exit.
+when things aren't working.
+
+**Launched by double-clicking the exe** (or from a Startup-folder shortcut, for it to
+start automatically at login) — no console, no log, no auto-popped window, just the tray
+icon. This is the background/silent way to run it; open the Devices window yourself
+anytime via the tray icon.
+
+Either way, a tray icon appears (gray dot = idle, green = a phone is connected) —
+right-click it for the PC's address, "Devices..." to open the Devices window (see
+below), "Copy address" to paste into the phone's CONFIG tab manually, or to Exit.
 
 ## Pairing and the Devices window
 
 Right-click the tray icon → **Devices...** opens a real window showing which device is
-currently connected, any in-progress pairing code, and every device that's ever been
+currently connected, an **Add New Device** button, and every device that's ever been
 trusted, with a **Forget selected device** button to revoke one.
 
-**First connection from a new phone**: the PC doesn't recognize it, so it generates a
-random 6-digit code, shows it in the Devices window (which pops to the front
-automatically so you don't miss it), and the phone asks for that code before it's
-allowed to send any input. Enter it on the phone within 5 wrong attempts / 2 minutes,
-and the PC remembers that device (by Android ID + model + build number, not just an IP)
-for every future connection — no code needed again unless you Forget it.
+**Pairing is opt-in, not automatic.** An unrecognized phone trying to connect gets
+rejected outright unless you've explicitly clicked **Add New Device** in the Devices
+window first — that's what generates the 6-digit code and QR code, and shows them right
+there so a new device can be added *before* anyone attempts to connect, not only
+reactively after. The code stays valid until either a device successfully uses it or you
+click **Cancel Pairing**; a wrong code just gets 5 attempts before that one connection is
+rejected, without closing pairing itself. Once a device pairs successfully, the PC
+remembers it (by Android ID + model + build number, not just an IP) for every future
+connection — no code needed again unless you Forget it.
+
+**Scan the QR code** from the phone's CONFIG tab → **Scan QR to Connect**. It opens an
+in-app camera scanner (asks for camera permission the first time) — point it at the QR
+and it fills in the host, connects, and submits the pairing code automatically, no
+typing. If the code shown happens to be stale by the time you scan it (someone clicked
+Add New Device again in between), the app falls back to the normal type-it-in dialog with
+an error shown, so nothing silently hangs. Typing the code manually works exactly the
+same either way.
 
 **Only one device controls the PC at a time.** The moment any phone starts connecting —
 recognized or not — the PC claims an internal slot and refuses every other connection
@@ -178,7 +204,15 @@ any of the packets above are accepted):
 | `{"t":"PAIRREQUIRED"}` | PC → phone | unrecognized device — phone should show a code-entry prompt |
 | `{"t":"PAIRCODE","code":".."}` | phone → PC | the code the user typed in, in response to `PAIRREQUIRED`/`WRONGCODE` |
 | `{"t":"WRONGCODE","attemptsLeft":..}` | PC → phone | code didn't match, try again |
-| `{"t":"REJECTED","reason":".."}` | PC → phone | handshake failed for good (`busy`, `wrong_code`, `bad_hello`) — connection is about to close |
+| `{"t":"REJECTED","reason":".."}` | PC → phone | handshake failed for good (`busy`, `pairing_closed`, `wrong_code`, `bad_hello`) — connection is about to close |
+
+The QR code shown alongside the pairing code isn't part of this TCP protocol at all — it
+encodes a `remotecontrol://pair?host=<ip>&port=<port>&code=<code>` link. The app's own
+**Scan QR to Connect** button reads it directly via an in-app camera scanner; the app also
+registers itself as a handler for that link in case a phone's regular camera app offers to
+open it, though that's just a bonus path, not the primary one. Either way it fills in the
+host and code automatically, skipping the manual PAIRCODE typing step above (the packet
+itself is identical either way — the QR is just a shortcut for supplying it).
 
 UDP port 58201, discovery only: phone broadcasts `RC_DISCOVER`, PC replies
 `RC_HOST <ip> <tcp-port>` directly to the sender. This is a custom protocol, not real
@@ -215,5 +249,9 @@ Disconnect from the CONFIG tab clears the queue instead of replaying it later.
   trusted phone can control the PC, and the 6-digit code is only as secret as whoever can
   see the PC's screen at the moment it's shown. Fine for a home network among people you
   live with; it's not multi-user access control.
+- QR scan-to-pair uses the app's own in-app scanner (CONFIG tab → **Scan QR to
+  Connect**), not your phone's regular camera app, so it works the same regardless of
+  what camera app is installed. Typing the 6-digit code shown next to the QR works
+  exactly the same either way.
 - `Ctrl`/`Alt`/`Shift`/`Win` combos only work for letters and digits (their Windows
   virtual-key codes are layout-independent); symbol combos aren't supported.

@@ -308,6 +308,14 @@
                     android:layout_marginTop="4dp"
                     android:text="+ Save Current Device" />
 
+                <Button
+                    android:id="@+id/btnScanQr"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:backgroundTint="@color/accent"
+                    android:text="Scan QR to Connect" />
+
                 <TextView
                     style="@style/ConfigLabel"
                     android:layout_marginTop="20dp"

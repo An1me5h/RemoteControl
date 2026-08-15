@@ -181,9 +181,20 @@ class Server
             return label;
         }
 
-        // Not a recognized device - pair it.
-        string code = _pairing.GenerateCode();
-        _pairing.NotifyPairingStarted(code, hello.Model!);
+        // Not a recognized device - only allowed in if the user has explicitly opened
+        // pairing mode (DeviceWindow's "Add New Device" button). No open code means no
+        // unrecognized device gets past HELLO, full stop - this is what makes pairing
+        // opt-in rather than any stranger on the LAN being able to try guessing a code
+        // whenever they feel like it.
+        string? code = _pairing.OpenCode;
+        if (code == null)
+        {
+            await writer.WriteLineAsync("{\"t\":\"REJECTED\",\"reason\":\"pairing_closed\"}");
+            ConnectionRejected?.Invoke($"unrecognized device rejected - pairing isn't open ({label})");
+            return null;
+        }
+
+        _pairing.NotifyAttemptStarted(hello.Model!);
         await writer.WriteLineAsync("{\"t\":\"PAIRREQUIRED\"}");
 
         try
@@ -196,7 +207,7 @@ class Server
                 if (codeLine == null) return null;
 
                 var codePacket = PacketCodec.Decode(codeLine);
-                if (codePacket is { Type: PacketType.PairCode } && codePacket.Value.Code == code)
+                if (codePacket is { Type: PacketType.PairCode } && codePacket.Value.Code == _pairing.OpenCode)
                 {
                     _pairing.Approve(hello.DeviceId!, hello.Model!, hello.Build!, hello.Name ?? hello.Model!);
                     await writer.WriteLineAsync("{\"t\":\"WELCOME\"}");
@@ -216,7 +227,7 @@ class Server
         }
         finally
         {
-            _pairing.NotifyPairingEnded();
+            _pairing.NotifyAttemptEnded();
         }
     }
 

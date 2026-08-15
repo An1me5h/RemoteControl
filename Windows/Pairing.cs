@@ -2,28 +2,44 @@ using System.Security.Cryptography;
 
 namespace RemoteControl;
 
-/// Owns trust state and the "only one device at a time" rule. A single mutable slot -
-/// claimed the moment a TCP connection starts its handshake (before we even know if it'll
-/// turn out to be a trusted device or need pairing) and released when that connection
-/// ends - is what enforces "only one device can control it at a time": a second
-/// connection attempt while the slot is held gets rejected immediately, whether it's an
-/// unrecognized device or the very same one reconnecting.
+/// Owns trust state, the "only one device at a time" rule, and pairing-mode state. A
+/// single mutable slot - claimed the moment a TCP connection starts its handshake (before
+/// we even know if it'll turn out to be a trusted device or need pairing) and released
+/// when that connection ends - is what enforces "only one device can control it at a
+/// time": a second connection attempt while the slot is held gets rejected immediately,
+/// whether it's an unrecognized device or the very same one reconnecting.
+///
+/// Pairing itself is opt-in, not always-on: an unrecognized device is rejected outright
+/// unless the user has explicitly opened pairing mode (DeviceWindow's "Add New Device"
+/// button), which is what generates the code/QR shown on screen. This is deliberately a
+/// standing code - generated once when pairing opens, valid until someone successfully
+/// uses it or the user cancels - rather than a fresh one minted mid-handshake, so the QR
+/// is actually there to be scanned *before* anyone tries to connect, not only reactively
+/// after.
 class PairingCoordinator
 {
     public const int MaxCodeAttempts = 5;
 
-    /// Covers the *entire* handshake from HELLO to the last code attempt, not per-message -
-    /// has to be generous enough for a real person to notice the pairing window, read a
-    /// 6-digit code off it, and type it into the phone, not just round-trip a packet.
+    /// Bounds a single handshake attempt (HELLO through its last PAIRCODE try), not how
+    /// long pairing mode itself stays open - that's controlled by OpenPairing/ClosePairing
+    /// instead, with no timeout of its own (closes on success or explicit cancel).
     public const int HandshakeTimeoutSeconds = 120;
 
     private readonly object _lock = new();
     private readonly List<TrustedDevice> _trusted;
     private bool _slotClaimed;
+    private string? _openCode;
 
-    /// (code, requesting device's model name)
-    public event Action<string, string>? PairingCodeGenerated;
-    public event Action? PairingEnded;
+    /// Fired with the new code when pairing mode opens (Add New Device clicked).
+    public event Action<string>? PairingOpened;
+    /// Fired when pairing mode closes - explicit cancel, or automatically after a
+    /// successful Approve (single-use: one open, one device, then closed again).
+    public event Action? PairingClosed;
+    /// Fired when an unrecognized device's HELLO actually starts a handshake attempt
+    /// against an already-open code - lets DeviceWindow show which device is trying and
+    /// steal focus, without changing what code is displayed (it's already showing).
+    public event Action<string>? PairingAttemptStarted;
+    public event Action? PairingAttemptEnded;
     public event Action<TrustedDevice>? DeviceApproved;
     public event Action<TrustedDevice>? DeviceForgotten;
 
@@ -35,6 +51,12 @@ class PairingCoordinator
     public IReadOnlyList<TrustedDevice> TrustedDevices
     {
         get { lock (_lock) return _trusted.ToList(); }
+    }
+
+    /// Null means pairing is closed - any unrecognized device gets rejected outright.
+    public string? OpenCode
+    {
+        get { lock (_lock) return _openCode; }
     }
 
     public bool TryClaimSlot()
@@ -61,18 +83,35 @@ class PairingCoordinator
         }
     }
 
-    /// 6-digit code, cryptographically random (not System.Random) - this is the one thing
-    /// standing between "any device on the LAN" and "only devices someone deliberately
-    /// approved," so it shouldn't be guessable from a predictable seed.
-    public string GenerateCode()
+    /// Generates a fresh code and opens pairing mode - called from the "Add New Device"
+    /// button, not automatically. Calling this again while already open regenerates the
+    /// code (invalidates whatever was showing before), same as a fresh open.
+    public string OpenPairing()
     {
-        var code = RandomNumberGenerator.GetInt32(100_000, 1_000_000).ToString();
+        string code;
+        lock (_lock)
+        {
+            code = GenerateCode();
+            _openCode = code;
+        }
+        PairingOpened?.Invoke(code);
         return code;
     }
 
-    public void NotifyPairingStarted(string code, string model) => PairingCodeGenerated?.Invoke(code, model);
+    public void ClosePairing()
+    {
+        lock (_lock) { _openCode = null; }
+        PairingClosed?.Invoke();
+    }
 
-    public void NotifyPairingEnded() => PairingEnded?.Invoke();
+    /// 6-digit code, cryptographically random (not System.Random) - this is the one thing
+    /// standing between "any device on the LAN" and "only devices someone deliberately
+    /// approved," so it shouldn't be guessable from a predictable seed.
+    private static string GenerateCode() => RandomNumberGenerator.GetInt32(100_000, 1_000_000).ToString();
+
+    public void NotifyAttemptStarted(string model) => PairingAttemptStarted?.Invoke(model);
+
+    public void NotifyAttemptEnded() => PairingAttemptEnded?.Invoke();
 
     public void Approve(string deviceId, string model, string build, string name)
     {
@@ -83,7 +122,9 @@ class PairingCoordinator
             device = new TrustedDevice(deviceId, model, build, name, DateTime.Now);
             _trusted.Add(device);
             DeviceTrustStore.Save(_trusted);
+            _openCode = null; // single-use: this open/scan cycle is done
         }
+        PairingClosed?.Invoke();
         DeviceApproved?.Invoke(device);
     }
 

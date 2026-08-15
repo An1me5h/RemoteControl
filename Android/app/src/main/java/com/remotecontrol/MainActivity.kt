@@ -1,7 +1,9 @@
 package com.remotecontrol
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -19,6 +21,7 @@ import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.google.zxing.integration.android.IntentIntegrator
 
 class MainActivity : AppCompatActivity() {
 
@@ -43,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnAddCustomKey: Button
     private lateinit var savedDevicesContainer: LinearLayout
     private lateinit var btnSaveDevice: Button
+    private lateinit var btnScanQr: Button
     private lateinit var etHost: EditText
     private lateinit var etPort: EditText
     private lateinit var sensitivityLabel: TextView
@@ -67,6 +71,11 @@ class MainActivity : AppCompatActivity() {
 
     private var pairingDialog: AlertDialog? = null
 
+    /** Set by [handlePairIntent] when a QR scan supplied a code up front - [setupConnection]'s
+     *  `onPairingRequired` submits it automatically instead of showing the type-it-in dialog. */
+    private var pendingQrCode: String? = null
+    private var lastPcLabel: String = "this PC"
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -83,8 +92,66 @@ class MainActivity : AppCompatActivity() {
         setupCustomKeys()
         setupTextPanel()
         setupSavedDevices()
+        setupQrScan()
         setupConfig()
         setupConnection()
+        handlePairIntent(intent)
+    }
+
+    /** singleTop (see AndroidManifest) means a second QR scan while the app is already open
+     *  re-delivers here instead of spawning a new Activity instance. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handlePairIntent(intent)
+    }
+
+    /** External camera apps opening `remotecontrol://pair?..` as a deep link land here (see
+     *  AndroidManifest's intent-filter) - kept as a bonus path alongside [setupQrScan]'s
+     *  in-app scanner below, in case a given phone's camera app does offer to open it. Not
+     *  the primary path: relying on an external camera app recognizing a custom URI scheme
+     *  turned out unreliable in practice - see ForClaudeUseOnly.md. */
+    private fun handlePairIntent(intent: Intent?) = handlePairUri(intent?.data)
+
+    /** Wires the "Scan QR to Connect" button to ZXing's embedded scanner. This is the
+     *  reliable path (unlike the external-camera-app deep link above): scanning happens
+     *  inside this same Activity/ConnectionManager instance, so there's no risk of a second
+     *  app instance/task spinning up a competing connection attempt. */
+    private fun setupQrScan() {
+        btnScanQr.setOnClickListener {
+            IntentIntegrator(this)
+                .setPrompt("Scan the PC's pairing QR code")
+                .setBeepEnabled(false)
+                .setOrientationLocked(false)
+                .initiateScan()
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
+        val contents = result?.contents ?: return
+        handlePairUri(Uri.parse(contents))
+    }
+
+    /** Fills the host/port fields exactly like picking a saved device would, then connects
+     *  immediately - the scanned code is stashed in [pendingQrCode] so `onPairingRequired`
+     *  (below, in [setupConnection]) can submit it without making the user re-type what they
+     *  just scanned. Shared by both scan paths above; silently does nothing for a URI that
+     *  isn't one of our own pairing links (e.g. someone scans an unrelated QR by mistake). */
+    private fun handlePairUri(uri: Uri?) {
+        if (uri == null || uri.scheme != "remotecontrol" || uri.host != "pair") return
+
+        val host = uri.getQueryParameter("host")?.takeIf { it.isNotBlank() } ?: return
+        val port = uri.getQueryParameter("port")?.toIntOrNull() ?: ConnectionManager.DEFAULT_PORT
+        pendingQrCode = uri.getQueryParameter("code")
+
+        etHost.setText(host)
+        etPort.setText(port.toString())
+        prefs.edit().putString("host", host).putInt("port", port).apply()
+
+        conn.disconnect()
+        conn.connect(host, port)
     }
 
     private fun bindViews() {
@@ -106,6 +173,7 @@ class MainActivity : AppCompatActivity() {
         btnAddCustomKey = findViewById(R.id.btnAddCustomKey)
         savedDevicesContainer = findViewById(R.id.savedDevicesContainer)
         btnSaveDevice = findViewById(R.id.btnSaveDevice)
+        btnScanQr = findViewById(R.id.btnScanQr)
         etHost = findViewById(R.id.etHost)
         etPort = findViewById(R.id.etPort)
         sensitivityLabel = findViewById(R.id.sensitivityLabel)
@@ -603,11 +671,30 @@ class MainActivity : AppCompatActivity() {
             latencyText.visibility = View.VISIBLE
             latencyText.text = "${rtt}ms"
         }
-        conn.onPairingRequired = { pcLabel -> showPairingDialog(pcLabel) }
+        conn.onPairingRequired = { pcLabel ->
+            lastPcLabel = pcLabel
+            val qrCode = pendingQrCode
+            if (qrCode != null) {
+                pendingQrCode = null
+                conn.submitPairingCode(qrCode)
+            } else {
+                showPairingDialog(pcLabel)
+            }
+        }
         conn.onPairingWrongCode = { attemptsLeft ->
+            // A QR-submitted code can be wrong (stale/expired QR still on screen) with no
+            // dialog open yet to show the error in - open it now so the user can fall back
+            // to typing the current code instead of the flow silently going nowhere.
+            if (pairingDialog?.isShowing != true) showPairingDialog(lastPcLabel)
             showPairingError("Wrong code - $attemptsLeft attempt(s) left")
         }
-        conn.onPairingEnded = { dismissPairingDialog() }
+        conn.onPairingEnded = {
+            // A scanned code that never got used (e.g. pairing was closed on the PC, or
+            // the attempt was abandoned) shouldn't linger and get silently auto-submitted
+            // on some later, unrelated pairing attempt.
+            pendingQrCode = null
+            dismissPairingDialog()
+        }
 
         btnConnect.setOnClickListener {
             if (btnConnect.text == "Connect") {

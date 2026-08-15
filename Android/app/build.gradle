@@ -42,4 +42,8 @@ android {
 dependencies {
     implementation 'androidx.core:core-ktx:1.15.0'
     implementation 'androidx.appcompat:appcompat:1.7.0'
+    // In-app QR scanner for pairing - reliable regardless of what camera app the phone
+    // defaults to (the remotecontrol:// deep link alone isn't, see ForClaudeUseOnly.md).
+    // Handles the CAMERA runtime permission prompt itself.
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
 }

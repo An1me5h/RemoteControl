@@ -34,7 +34,7 @@ class TrayApp : ApplicationContext
         Console.WriteLine("Waiting for a phone to connect...");
 
         _pairing = new PairingCoordinator();
-        _deviceWindow = new DeviceWindow(_pairing);
+        _deviceWindow = new DeviceWindow(_pairing, _localAddress, Server.Port);
         if (foreground) _deviceWindow.Show();
 
         _statusItem = new ToolStripMenuItem(StatusText(0)) { Enabled = false };
@@ -82,12 +82,10 @@ class TrayApp : ApplicationContext
             $"[{Now()}] Client disconnected while holding input - released {vkCount} key(s)" +
             (mouseReleased ? " and the left mouse button." : "."));
 
-        _pairing.PairingCodeGenerated += (code, model) =>
-        {
-            _deviceWindow.ShowPairingCode(code, model);
-            Console.WriteLine($"[{Now()}] Pairing code for {model}: {code}");
-        };
-        _pairing.PairingEnded += () => _deviceWindow.HidePairingCode();
+        _pairing.PairingOpened += code => Console.WriteLine($"[{Now()}] Pairing opened - code: {code}");
+        _pairing.PairingClosed += () => Console.WriteLine($"[{Now()}] Pairing closed.");
+        _pairing.PairingAttemptStarted += model => Console.WriteLine($"[{Now()}] {model} is attempting to pair...");
+        _pairing.PairingAttemptEnded += () => Console.WriteLine($"[{Now()}] Pairing attempt ended.");
         _pairing.DeviceApproved += device => Console.WriteLine($"[{Now()}] Paired and trusted: {device.Name}");
         _pairing.DeviceForgotten += device => Console.WriteLine($"[{Now()}] Forgot device: {device.Name}");
 
