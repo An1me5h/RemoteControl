@@ -14,19 +14,34 @@ only, over your local Wi-Fi network. Built from scratch
 [Android phone]                                  [Windows PC]
  TrackpadView / keyboard  ── JSON packets ──┐
  ConnectionManager ──────────────────────────┼─ TCP :5201  ──► InputInjector (SendInput)
-                                              └─ UDP :58201 ──► Discovery responder
+                                              ├─ UDP :58201 ──► Discovery responder
+ ScreenClient  ◄── MJPEG/HTTP frames ─────────┴─ TCP :5202  ◄── ScreenStreamer (screen mirroring)
 ```
 
 ## What's in this folder
 
 - `Windows/` — C# .NET 8 tray app (`RemoteControl.exe`). Sits in the system tray and
-  listens on TCP 5201 for input packets and UDP 58201 for auto-discovery. Launched from a
-  terminal, it also prints a live packet log there and pops the Devices window; launched
-  by double-click (or a Startup-folder shortcut), it runs silently in the background with
-  just the tray icon — see "Running the Windows side" below.
+  listens on TCP 5201 for input packets, UDP 58201 for auto-discovery, and TCP 5202 for
+  screen mirroring. Launched from a terminal, it also prints a live packet log there and
+  pops the Devices window; launched by double-click (or a Startup-folder shortcut), it
+  runs silently in the background with just the tray icon — see "Running the Windows
+  side" below.
 - `Android/` — Kotlin app (Gradle project, package `com.remotecontrol`). Trackpad +
-  on-screen keyboard, CONTROL/CONFIG tabs, auto-reconnect.
+  on-screen keyboard, live screen mirroring with adjustable quality (down to fully off, to
+  keep the trackpad responsive), CONTROL/CONFIG tabs, auto-reconnect.
 - `RemoteControl-debug.apk` — prebuilt debug APK, sideloadable as-is.
+
+## Screen mirroring
+
+The CONTROL tab shows the PC's screen live above the trackpad, streamed as MJPEG over its
+own connection (TCP 5202) — no separate app needed on the PC side, and it also works from
+a plain browser at `http://<pc-ip>:5202/` if you'd rather not install anything. Tap the
+quality button in the corner of the screen panel to cycle **LOW → MED → HIGH → MAX → OFF**;
+video and trackpad input share the same Wi-Fi radio, so a heavier stream can cost cursor
+responsiveness — drop to a lower quality, or OFF, if the trackpad feels laggy while the
+screen is visible. Pinch to zoom and drag to pan on the image (view-only — it doesn't move
+the cursor, use the trackpad for that). The PC only actually captures frames while
+something is watching, so it costs nothing when the screen panel isn't open.
 
 ## Running the Windows side
 
@@ -182,9 +197,9 @@ Long-press a custom key to delete it.
 
 ## Firewall
 
-Windows will prompt to allow `RemoteControl.exe` through the firewall on first run
-(needs both TCP 5201 and UDP 58201 on private networks). Allow it, or auto-discovery and
-the phone's connection will silently fail.
+Windows will prompt to allow `RemoteControl.exe` through the firewall on first run (needs
+TCP 5201, UDP 58201, and TCP 5202 on private networks). Allow it, or auto-discovery, the
+phone's connection, and screen mirroring will silently fail.
 
 ## Wire protocol
 

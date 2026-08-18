@@ -27,6 +27,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var prefs: SharedPreferences
     private lateinit var conn: ConnectionManager
+    private lateinit var screen: ScreenClient
 
     private lateinit var statusDot: View
     private lateinit var statusText: TextView
@@ -36,6 +37,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var controlPanel: View
     private lateinit var configPanel: View
     private lateinit var trackpadView: TrackpadView
+    private lateinit var screenImage: ZoomableImageView
+    private lateinit var screenStatus: TextView
+    private lateinit var zoomBadge: TextView
+    private lateinit var btnQuality: Button
     private lateinit var keyboardPanel: ScrollView
     private lateinit var btnKeys: Button
     private lateinit var textPanel: View
@@ -82,8 +87,10 @@ class MainActivity : AppCompatActivity() {
 
         prefs = getSharedPreferences("remotecontrol", MODE_PRIVATE)
         conn = ConnectionManager(applicationContext)
+        screen = ScreenClient()
 
         bindViews()
+        setupScreen() // must precede setupTabs() - selecting CONTROL touches ScreenClient
         setupTabs()
         setupTrackpad()
         setupClickButtons()
@@ -163,6 +170,10 @@ class MainActivity : AppCompatActivity() {
         controlPanel = findViewById(R.id.controlPanel)
         configPanel = findViewById(R.id.configPanel)
         trackpadView = findViewById(R.id.trackpadView)
+        screenImage = findViewById(R.id.screenImage)
+        screenStatus = findViewById(R.id.screenStatus)
+        zoomBadge = findViewById(R.id.zoomBadge)
+        btnQuality = findViewById(R.id.btnQuality)
         keyboardPanel = findViewById(R.id.keyboardPanel)
         btnKeys = findViewById(R.id.btnKeys)
         textPanel = findViewById(R.id.textPanel)
@@ -195,6 +206,79 @@ class MainActivity : AppCompatActivity() {
         configPanel.visibility = if (control) View.GONE else View.VISIBLE
         tabControl.setTextColor(resources.getColor(if (control) R.color.accent else R.color.text_secondary, theme))
         tabConfig.setTextColor(resources.getColor(if (control) R.color.text_secondary else R.color.accent, theme))
+
+        // Streaming is real Wi-Fi/battery cost on both ends, so it only runs while CONTROL
+        // is actually the visible tab.
+        if (control) startScreenStream() else screen.stop()
+    }
+
+    // ── Screen mirroring ─────────────────────────────────────────────────────────
+
+    private fun setupScreen() {
+        screen.onFrame = { bitmap ->
+            screenImage.setImageBitmap(bitmap)
+            screenStatus.visibility = View.GONE
+        }
+
+        screenImage.onZoomChanged = { zoom ->
+            zoomBadge.text = "%.1fx".format(zoom)
+            zoomBadge.visibility = if (zoom > 1.01f) View.VISIBLE else View.GONE
+        }
+
+        btnQuality.text = ScreenClient.QUALITY_NAMES[qualityLevel()]
+        btnQuality.setOnClickListener {
+            val next = (qualityLevel() + 1) % ScreenClient.QUALITY_NAMES.size
+            prefs.edit().putInt("quality", next).apply()
+            btnQuality.text = ScreenClient.QUALITY_NAMES[next]
+            // The preset is chosen by the server when the stream opens, so apply a change
+            // by reconnecting rather than trying to renegotiate mid-stream.
+            screen.stop()
+            startScreenStream()
+        }
+
+        screen.onStateChange = { state ->
+            when (state) {
+                ScreenClient.State.STREAMING -> screenStatus.visibility = View.GONE
+                ScreenClient.State.CONNECTING -> {
+                    screenStatus.text = "Connecting to screen..."
+                    screenStatus.visibility = View.VISIBLE
+                }
+                ScreenClient.State.STOPPED -> {
+                    screenStatus.text = "Screen stream disconnected"
+                    screenStatus.visibility = View.VISIBLE
+                }
+            }
+        }
+    }
+
+    /** Index into ScreenClient.QUALITY_NAMES; cycled by the on-screen quality button. */
+    private fun qualityLevel(): Int =
+        prefs.getInt("quality", ScreenClient.DEFAULT_QUALITY).coerceIn(0, ScreenClient.QUALITY_NAMES.size - 1)
+
+    /** Reuses whatever host the input connection resolved (typed, saved, or from a QR
+     *  scan) so the screen stream never asks for the IP a second time. */
+    private fun startScreenStream() {
+        // OFF frees all Wi-Fi airtime for trackpad input - video and input share the same
+        // radio, so a heavy stream directly costs cursor responsiveness.
+        if (qualityLevel() == ScreenClient.OFF_QUALITY) {
+            screen.stop()
+            screenStatus.text = "Screen mirroring off - tap quality to re-enable"
+            screenStatus.visibility = View.VISIBLE
+            return
+        }
+
+        // Reads prefs directly, not etHost.text - setupTabs() (which selects CONTROL and
+        // triggers this on a cold start) runs before setupConfig() populates that field.
+        val host = conn.currentHost ?: prefs.getString("host", null)?.takeIf { it.isNotBlank() }
+        if (host.isNullOrBlank()) {
+            screenStatus.text = "Set the PC IP in CONFIG first"
+            screenStatus.visibility = View.VISIBLE
+            return
+        }
+
+        screenStatus.text = "Connecting to screen..."
+        screenStatus.visibility = View.VISIBLE
+        screen.start(host, ScreenClient.PORT, qualityLevel())
     }
 
     private fun setupTrackpad() {
@@ -711,10 +795,19 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         releaseAllHeldKeys()
+        // Don't keep pulling video in the background - real Wi-Fi/battery cost for no
+        // visible benefit while the app isn't on screen.
+        screen.stop()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (controlPanel.visibility == View.VISIBLE) startScreenStream()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        screen.stop()
         conn.disconnect()
     }
 }

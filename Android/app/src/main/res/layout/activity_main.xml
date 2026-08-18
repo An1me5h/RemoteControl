@@ -69,6 +69,60 @@
             android:orientation="vertical"
             android:padding="8dp">
 
+            <!-- live PC screen - always shown alongside the trackpad while CONTROL is
+                 visible; the quality button includes an OFF state to free all Wi-Fi
+                 airtime for input if the video costs too much responsiveness -->
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_marginBottom="8dp"
+                android:background="@color/surface">
+
+                <com.remotecontrol.ZoomableImageView
+                    android:id="@+id/screenImage"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+                <TextView
+                    android:id="@+id/screenStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp"
+                    android:text="Screen mirroring off" />
+
+                <TextView
+                    android:id="@+id/zoomBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="top|end"
+                    android:layout_margin="6dp"
+                    android:background="@drawable/key_bg"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="3dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="11sp"
+                    android:visibility="gone" />
+
+                <Button
+                    android:id="@+id/btnQuality"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="bottom|end"
+                    android:layout_margin="6dp"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="4dp"
+                    android:background="@drawable/key_bg"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    android:textAllCaps="false"
+                    android:text="LOW" />
+            </FrameLayout>
+
             <FrameLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"

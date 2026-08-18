@@ -14,6 +14,7 @@ class TrayApp : ApplicationContext
     private readonly NotifyIcon _icon;
     private readonly PairingCoordinator _pairing;
     private readonly Server _server;
+    private readonly ScreenStreamer _screenStreamer;
     private readonly DeviceWindow _deviceWindow;
     private readonly ToolStripMenuItem _statusItem;
     private readonly string _localAddress;
@@ -106,7 +107,16 @@ class TrayApp : ApplicationContext
         _pairing.DeviceApproved += device => Log($"[{Now()}] Paired and trusted: {device.Name}");
         _pairing.DeviceForgotten += device => Log($"[{Now()}] Forgot device: {device.Name}");
 
+        // Separate socket (port 5202) from Server's 5201 - screen frames are binary JPEG,
+        // input packets are newline-delimited JSON, so they never share framing. Log goes
+        // through the same queue as everything else, never a direct Console.WriteLine.
+        // () => _server.HasActiveConnection gates streaming on a real paired connection
+        // existing - see ScreenStreamer's _isDeviceConnected doc comment.
+        _screenStreamer = new ScreenStreamer(() => _server.HasActiveConnection);
+        _screenStreamer.Log += msg => Log($"[{Now()}] [screen] {msg}");
+
         _server.Start();
+        _screenStreamer.Start();
 
         Discovery.StartResponder(Server.Port, _cts.Token);
     }
@@ -153,6 +163,7 @@ class TrayApp : ApplicationContext
     {
         _cts.Cancel();
         _server.Stop();
+        _screenStreamer.Stop();
         _icon.Visible = false;
         _icon.Dispose();
         _deviceWindow.Dispose();

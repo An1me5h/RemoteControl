@@ -21,6 +21,12 @@ class Server
     private volatile TcpClient? _connectedClient;
     private volatile string? _connectedDeviceId;
 
+    // Exposed so ScreenStreamer can refuse to stream to anyone until a device has actually
+    // paired and connected through the real input protocol - screen visibility should follow
+    // the same "only the one approved device" rule the rest of this app already enforces,
+    // not be reachable by anything on the LAN that happens to know the PC's IP and port.
+    public bool HasActiveConnection => _connectedClient != null;
+
     public event Action<int>? ClientCountChanged;
     public event Action<Packet>? PacketReceived;
     public event Action<string>? UndecodableLineReceived;
