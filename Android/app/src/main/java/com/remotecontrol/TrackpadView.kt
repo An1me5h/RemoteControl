@@ -87,7 +87,7 @@ class TrackpadView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_POINTER_UP -> {
                 activePointers = (event.pointerCount - 1).coerceAtLeast(0)
-                resetOrigin(event)
+                resetOriginExcluding(event, event.actionIndex)
             }
             MotionEvent.ACTION_MOVE -> {
                 if (activePointers == 1) {
@@ -120,5 +120,27 @@ class TrackpadView @JvmOverloads constructor(
         lastY = event.y
         accumX = 0f
         accumY = 0f
+    }
+
+    /**
+     * Same as [resetOrigin], but for ACTION_POINTER_UP: event.x/y (pointer index 0) can be
+     * the *lifting* finger, not the one that stays down - which physical finger Android
+     * assigns to index 0 isn't guaranteed to be the one that keeps touching. Using the
+     * wrong finger's position here poisons lastX/lastY, so the next single-finger
+     * ACTION_MOVE computes its delta against a stale point possibly inches away, sending
+     * one large spurious jump right as a two-finger scroll or tap ends. Picks any pointer
+     * other than the one at [excludeIndex] (the one reported as going up) instead.
+     */
+    private fun resetOriginExcluding(event: MotionEvent, excludeIndex: Int) {
+        for (i in 0 until event.pointerCount) {
+            if (i != excludeIndex) {
+                lastX = event.getX(i)
+                lastY = event.getY(i)
+                accumX = 0f
+                accumY = 0f
+                return
+            }
+        }
+        resetOrigin(event)
     }
 }

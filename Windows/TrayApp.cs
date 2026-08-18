@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Windows.Forms;
 
 namespace RemoteControl;
@@ -18,6 +19,19 @@ class TrayApp : ApplicationContext
     private readonly string _localAddress;
     private readonly CancellationTokenSource _cts = new();
 
+    // All console output goes through this queue instead of calling Console.WriteLine
+    // directly. Server.PacketReceived fires synchronously on Server.HandleClientAsync's
+    // per-client dispatch loop, right before InputInjector.Dispatch - a direct
+    // Console.WriteLine there means every MOVE packet (up to ~100/sec during a drag) pays
+    // for a lock + a console I/O call before the cursor actually moves. Worse: if the
+    // console window has QuickEdit Mode text selected, Console.WriteLine blocks
+    // *indefinitely* until it's deselected, which would freeze real input for as long as
+    // that lasts. A dedicated consumer thread drains the queue, so nothing on the
+    // dispatch path ever touches the console directly - same reasoning as
+    // ConnectionManager.kt's writeExecutor on the Android side.
+    private readonly BlockingCollection<string> _logQueue = new(boundedCapacity: 2000);
+    private readonly Thread _logThread;
+
     /// [foreground] is true when this process reattached to a launching terminal's console
     /// (see Program.cs) - i.e. it was started from `dotnet run` or a shell, not by
     /// double-clicking the exe or a Startup-folder/Task Scheduler entry. Only then do we
@@ -25,13 +39,16 @@ class TrayApp : ApplicationContext
     /// until the user opens it themselves.
     public TrayApp(bool foreground)
     {
+        _logThread = new Thread(LogWorker) { IsBackground = true, Name = "ConsoleLogWriter" };
+        _logThread.Start();
+
         _hiddenWindow = new Form { ShowInTaskbar = false, Opacity = 0, FormBorderStyle = FormBorderStyle.FixedToolWindow };
         _hiddenWindow.Load += (_, _) => _hiddenWindow.Hide();
         _hiddenWindow.Show();
 
         _localAddress = Discovery.GetLocalAddress() ?? "unknown address";
-        Console.WriteLine($"RemoteControl listening on {_localAddress}:{Server.Port} (TCP) and UDP {Discovery.Port} (discovery)");
-        Console.WriteLine("Waiting for a phone to connect...");
+        Log($"RemoteControl listening on {_localAddress}:{Server.Port} (TCP) and UDP {Discovery.Port} (discovery)");
+        Log("Waiting for a phone to connect...");
 
         _pairing = new PairingCoordinator();
         _deviceWindow = new DeviceWindow(_pairing, _localAddress, Server.Port);
@@ -68,26 +85,26 @@ class TrayApp : ApplicationContext
         _server.DeviceConnected += label =>
         {
             _deviceWindow.ShowConnected(label);
-            Console.WriteLine($"[{Now()}] Connected: {label}");
+            Log($"[{Now()}] Connected: {label}");
         };
         _server.DeviceDisconnected += () =>
         {
             _deviceWindow.ShowDisconnected();
-            Console.WriteLine($"[{Now()}] Device disconnected.");
+            Log($"[{Now()}] Device disconnected.");
         };
-        _server.ConnectionRejected += reason => Console.WriteLine($"[{Now()}] Connection rejected: {reason}");
-        _server.PacketReceived += p => Console.WriteLine($"[{Now()}] {PacketFormat.Describe(p)}");
-        _server.UndecodableLineReceived += line => Console.WriteLine($"[{Now()}] ?? unrecognized: {line}");
-        _server.HeldInputReleased += (vkCount, mouseReleased) => Console.WriteLine(
+        _server.ConnectionRejected += reason => Log($"[{Now()}] Connection rejected: {reason}");
+        _server.PacketReceived += p => Log($"[{Now()}] {PacketFormat.Describe(p)}");
+        _server.UndecodableLineReceived += line => Log($"[{Now()}] ?? unrecognized: {line}");
+        _server.HeldInputReleased += (vkCount, mouseReleased) => Log(
             $"[{Now()}] Client disconnected while holding input - released {vkCount} key(s)" +
             (mouseReleased ? " and the left mouse button." : "."));
 
-        _pairing.PairingOpened += code => Console.WriteLine($"[{Now()}] Pairing opened - code: {code}");
-        _pairing.PairingClosed += () => Console.WriteLine($"[{Now()}] Pairing closed.");
-        _pairing.PairingAttemptStarted += model => Console.WriteLine($"[{Now()}] {model} is attempting to pair...");
-        _pairing.PairingAttemptEnded += () => Console.WriteLine($"[{Now()}] Pairing attempt ended.");
-        _pairing.DeviceApproved += device => Console.WriteLine($"[{Now()}] Paired and trusted: {device.Name}");
-        _pairing.DeviceForgotten += device => Console.WriteLine($"[{Now()}] Forgot device: {device.Name}");
+        _pairing.PairingOpened += code => Log($"[{Now()}] Pairing opened - code: {code}");
+        _pairing.PairingClosed += () => Log($"[{Now()}] Pairing closed.");
+        _pairing.PairingAttemptStarted += model => Log($"[{Now()}] {model} is attempting to pair...");
+        _pairing.PairingAttemptEnded += () => Log($"[{Now()}] Pairing attempt ended.");
+        _pairing.DeviceApproved += device => Log($"[{Now()}] Paired and trusted: {device.Name}");
+        _pairing.DeviceForgotten += device => Log($"[{Now()}] Forgot device: {device.Name}");
 
         _server.Start();
 
@@ -95,6 +112,20 @@ class TrayApp : ApplicationContext
     }
 
     private static string Now() => DateTime.Now.ToString("HH:mm:ss.fff");
+
+    /// Never blocks the caller - if the console can't keep up, or is completely stalled
+    /// (e.g. QuickEdit Mode text selection), the line is silently dropped rather than
+    /// stalling whatever hot path called this. Losing a log line is fine; stalling real
+    /// cursor/keyboard input is not.
+    private void Log(string message) => _logQueue.TryAdd(message);
+
+    private void LogWorker()
+    {
+        foreach (var line in _logQueue.GetConsumingEnumerable())
+        {
+            Console.WriteLine(line);
+        }
+    }
 
     private void OnClientCountChanged(int count)
     {
@@ -126,6 +157,8 @@ class TrayApp : ApplicationContext
         _icon.Dispose();
         _deviceWindow.Dispose();
         _hiddenWindow.Close();
+        _logQueue.CompleteAdding();
+        _logThread.Join(TimeSpan.FromMilliseconds(500)); // flush remaining lines, don't hang exit on it
         base.ExitThreadCore();
     }
 }

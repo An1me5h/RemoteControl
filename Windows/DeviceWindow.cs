@@ -68,8 +68,11 @@ class DeviceWindow : Form
             Width = 200,
             Height = 32,
             FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(30, 34, 44),
+            ForeColor = Color.Gainsboro,
             Margin = new Padding(0, 0, 0, 12)
         };
+        StyleButton(_addDeviceButton);
         _addDeviceButton.Click += (_, _) => ToggleAddDevice();
 
         _pairingPanel = new Panel
@@ -144,8 +147,11 @@ class DeviceWindow : Form
             Text = "Forget selected device",
             Dock = DockStyle.Bottom,
             Height = 32,
-            FlatStyle = FlatStyle.Flat
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(30, 34, 44),
+            ForeColor = Color.Gainsboro
         };
+        StyleButton(_forgetButton);
         _forgetButton.Click += (_, _) => ForgetSelected();
 
         var listContainer = new Panel { Dock = DockStyle.Fill };
@@ -257,6 +263,18 @@ class DeviceWindow : Form
         int index = _trustedList.SelectedIndex;
         if (index < 0 || index >= _listedDevices.Count) return;
         _pairing.Forget(_listedDevices[index].DeviceId);
+    }
+
+    /// FlatStyle.Flat buttons need every color set explicitly, or they fall back to
+    /// WinForms' light-theme defaults - the near-invisible-text bug this fixes. Also adds
+    /// a visible border and hover/press feedback so buttons don't look flat-out inert
+    /// against the dark background.
+    private static void StyleButton(Button button)
+    {
+        button.FlatAppearance.BorderColor = Color.FromArgb(70, 76, 92);
+        button.FlatAppearance.BorderSize = 1;
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(40, 45, 58);
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(50, 56, 72);
     }
 
     private void RunOnUiThread(Action action)
