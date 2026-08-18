@@ -15,6 +15,10 @@ class Server
     private CancellationTokenSource? _cts;
     private int _clientCount;
 
+    // The most recently started connection handler - tracked so Stop() can actually wait
+    // for its cleanup (see below) instead of just firing cancellation and returning.
+    private volatile Task? _activeHandlerTask;
+
     // The single currently-approved connection, if any - only one can ever exist thanks to
     // PairingCoordinator's slot. Tracked so Forget can immediately sever a live session for
     // a device that was just revoked, not just block its *next* reconnect attempt.
@@ -62,10 +66,21 @@ class Server
         _ = AcceptLoopAsync(_cts.Token);
     }
 
+    /// Cancelling the token below makes a blocked `ReadLineAsync` in HandleClientAsync's
+    /// dispatch loop throw, which unwinds through its `finally` block and releases any held
+    /// key/mouse-button state via real Win32 SendInput calls (ReleaseHeldInput) - but that
+    /// cleanup runs on the handler's OWN async continuation, not synchronously here.
+    /// Without waiting for it, a caller that tears the whole process down right after Stop()
+    /// returns (TrayApp.ExitThreadCore does exactly this) can race ahead of that
+    /// continuation and exit the process before the key-up ever actually gets sent - nothing
+    /// is left running afterward to send it, so it stays held in Windows' real, global
+    /// keyboard state indefinitely. Bounded wait so a stuck/slow connection can never hang
+    /// app exit; 2s is generous for a SendInput call that normally completes in microseconds.
     public void Stop()
     {
         _cts?.Cancel();
         _listener.Stop();
+        try { _activeHandlerTask?.Wait(TimeSpan.FromSeconds(2)); } catch (Exception) { /* already faulted/cancelled - fine, we only cared that it ran */ }
     }
 
     private async Task AcceptLoopAsync(CancellationToken token)
@@ -81,7 +96,7 @@ class Server
             {
                 break;
             }
-            _ = HandleClientAsync(client, token);
+            _activeHandlerTask = HandleClientAsync(client, token);
         }
     }
 
