@@ -18,39 +18,59 @@ class CloseConfirmDialog : Form
     public CloseConfirmDialog()
     {
         Text = "RemoteControl";
-        FormBorderStyle = FormBorderStyle.FixedDialog;
+        // Sizable + AutoSize (not a hardcoded Height) - same fix as PriorityDialog's and
+        // RenameDeviceDialog's: FixedDialog blocked the user from dragging this bigger, and
+        // the message label's own hardcoded Height (70, AutoSize=false) was a guess that
+        // didn't leave enough room, so the two buttons below it rendered off the bottom of
+        // the visible window entirely - the exact same class of bug, just triggered by the
+        // close/quit path instead of a right-click menu.
+        FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(18, 20, 26);
-        Width = 360;
-        Height = 190;
+        Width = 460;
+        AutoSize = true;
+        MinimumSize = new Size(440, 210);
         Padding = new Padding(20);
         KeyPreview = true;
 
         var message = new Label
         {
-            AutoSize = false,
+            AutoSize = true,
             Dock = DockStyle.Top,
-            Height = 70,
+            // See PriorityDialog's label for why MaximumSize.Width is required, not
+            // optional, for a Dock=Top AutoSize label to actually wrap instead of rendering
+            // one clipped line.
+            MaximumSize = new Size(410, 0),
             ForeColor = Color.Gainsboro,
             Font = new Font("Segoe UI", 9.5f),
             Text = "RemoteControl is still running in the background - your phone can " +
-                   "keep controlling this PC. Minimize it, or disconnect and fully exit?"
+                   "keep controlling this PC. Minimize it, or disconnect and fully exit?",
+            Margin = new Padding(0, 0, 0, 6)
         };
 
         var buttonRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            Height = 40,
-            FlowDirection = FlowDirection.RightToLeft
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 40),
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false
         };
 
         var exitButton = new Button
         {
             Text = "Disconnect && Exit",
-            Width = 150,
-            Height = 32,
+            // AutoSize + a MinimumSize floor instead of a hardcoded Width - the hardcoded
+            // 150 turned out to be too narrow for this text (confirmed by an off-screen
+            // render: "Disconnect &" was visibly clipped), the same class of bug fixed for
+            // DeviceWindow's own buttons earlier this session.
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(150, 32),
+            Padding = new Padding(8, 4, 8, 4),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(30, 34, 44),
             ForeColor = Color.FromArgb(230, 150, 150), // a warning tint - this one actually ends the session
@@ -62,8 +82,10 @@ class CloseConfirmDialog : Form
         var minimizeButton = new Button
         {
             Text = "Minimize to Tray",
-            Width = 150,
-            Height = 32,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(150, 32),
+            Padding = new Padding(8, 4, 8, 4),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(30, 34, 44),
             ForeColor = Color.Gainsboro,

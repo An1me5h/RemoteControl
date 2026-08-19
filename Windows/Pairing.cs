@@ -197,9 +197,22 @@ class PairingCoordinator
         UpdateDevice(deviceId, device => WithHistory(device,
             viewOnly ? "Set to View Only" : "Set to Full Control") with { ViewOnly = viewOnly });
 
-    public void SetPriority(string deviceId, int priority) =>
+    /// Returns false (no-op, nothing saved) if another device already holds this exact
+    /// non-zero priority - enforced here, not only in DeviceWindow's dialog, so no future
+    /// caller can create a tie by going around the UI. 0 (unset) is exempt: many devices
+    /// can simultaneously have "no priority assigned" at once, that's the expected default,
+    /// not a conflict to reject.
+    public bool SetPriority(string deviceId, int priority)
+    {
+        lock (_lock)
+        {
+            if (priority != 0 && _trusted.Any(d => d.DeviceId != deviceId && d.Priority == priority))
+                return false;
+        }
         UpdateDevice(deviceId, device => WithHistory(device,
             $"Priority changed from {device.Priority} to {priority}") with { Priority = priority });
+        return true;
+    }
 
     /// Server.HandleClientAsync's per-packet check - true if the currently connected
     /// device (if any) is marked ViewOnly. Queried fresh on every packet rather than cached

@@ -1,12 +1,16 @@
 package com.remotecontrol
 
 import android.app.AlertDialog
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.SharedPreferences
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
@@ -15,13 +19,16 @@ import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.zxing.integration.android.IntentIntegrator
+import java.io.ByteArrayOutputStream
 
 class MainActivity : AppCompatActivity() {
 
@@ -48,6 +55,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etTextInput: EditText
     private lateinit var btnSendText: Button
     private lateinit var btnText: Button
+    private lateinit var imagePreviewRow: View
+    private lateinit var ivPastedImage: ImageView
+    private lateinit var btnSendImage: Button
+    private lateinit var btnClearImage: Button
+    private lateinit var btnPasteImage: Button
+
+    // Set by pasteImageFromClipboard, consumed (and cleared) by sendPendingImage - the
+    // Uri, not the decoded bytes, is what's held onto between paste and send, so a large
+    // image isn't sitting decoded in memory the whole time the user's still looking at it.
+    private var pendingImageUri: Uri? = null
     private lateinit var customKeysContainer: LinearLayout
     private lateinit var btnAddCustomKey: Button
     private lateinit var savedDevicesContainer: LinearLayout
@@ -182,6 +199,11 @@ class MainActivity : AppCompatActivity() {
         etTextInput = findViewById(R.id.etTextInput)
         btnSendText = findViewById(R.id.btnSendText)
         btnText = findViewById(R.id.btnText)
+        imagePreviewRow = findViewById(R.id.imagePreviewRow)
+        ivPastedImage = findViewById(R.id.ivPastedImage)
+        btnSendImage = findViewById(R.id.btnSendImage)
+        btnClearImage = findViewById(R.id.btnClearImage)
+        btnPasteImage = findViewById(R.id.btnPasteImage)
         customKeysContainer = findViewById(R.id.customKeysContainer)
         btnAddCustomKey = findViewById(R.id.btnAddCustomKey)
         savedDevicesContainer = findViewById(R.id.savedDevicesContainer)
@@ -334,6 +356,76 @@ class MainActivity : AppCompatActivity() {
                 conn.send(Packet.Text(text))
                 etTextInput.text.clear()
             }
+        }
+
+        btnPasteImage.setOnClickListener { pasteImageFromClipboard() }
+        btnClearImage.setOnClickListener { clearPendingImage() }
+        btnSendImage.setOnClickListener { sendPendingImage() }
+    }
+
+    /** Reads whatever image is currently on the Android clipboard (copied from Photos,
+     *  a screenshot, Chrome, another app's share-to-clipboard, ...) and stages it for
+     *  sending - the image equivalent of typing into etTextInput before hitting Send. */
+    private fun pasteImageFromClipboard() {
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        val uri = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+        if (uri == null) {
+            Toast.makeText(this, "Clipboard doesn't contain an image", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val mimeType = contentResolver.getType(uri)
+        if (mimeType == null || !mimeType.startsWith("image/")) {
+            Toast.makeText(this, "Clipboard doesn't contain an image", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        pendingImageUri = uri
+        ivPastedImage.setImageURI(uri)
+        imagePreviewRow.visibility = View.VISIBLE
+    }
+
+    private fun clearPendingImage() {
+        pendingImageUri = null
+        ivPastedImage.setImageDrawable(null)
+        imagePreviewRow.visibility = View.GONE
+    }
+
+    /** Downscales before sending (1600px max edge, JPEG quality 80) - a clipboard image can
+     *  be a full camera-resolution photo, and this travels over the same newline-delimited
+     *  TCP channel as every input packet; keeping the payload to a few hundred KB instead of
+     *  several MB keeps that channel responsive for whatever else is sharing it. Runs
+     *  synchronously on the UI thread - a brief decode/compress stall on an explicit "Send"
+     *  tap is an acceptable tradeoff for not needing a background-thread handoff for what's
+     *  a deliberate, infrequent action, not a hot path like MOVE packets. */
+    private fun sendPendingImage() {
+        val uri = pendingImageUri ?: return
+        try {
+            val original = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+            if (original == null) {
+                Toast.makeText(this, "Couldn't read that image", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            val maxDim = 1600
+            val scale = minOf(1f, maxDim.toFloat() / maxOf(original.width, original.height))
+            val scaled = if (scale < 1f) {
+                Bitmap.createScaledBitmap(
+                    original, (original.width * scale).toInt(), (original.height * scale).toInt(), true)
+            } else original
+
+            val out = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 80, out)
+            // NO_WRAP is not optional here - the default MIME-style encoding inserts line
+            // breaks, which would fragment this packet across multiple lines on a protocol
+            // that reads one JSON object per line (Server.cs's ReadLineAsync).
+            val base64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+            conn.send(Packet.Image(base64))
+
+            if (scaled !== original) scaled.recycle()
+            original.recycle()
+            clearPendingImage()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Failed to send image: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 

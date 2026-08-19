@@ -451,11 +451,27 @@ class DeviceWindow : Form
         {
             var device = SelectedDevice();
             if (device == null) return;
-            using var dialog = new PriorityDialog(device.Priority);
-            dialog.ShowDialog(this);
-            if (dialog.NewPriority.HasValue && dialog.NewPriority.Value != device.Priority)
+
+            // Loops instead of a single show/apply - if the chosen number is already taken
+            // by another device, SetPriority refuses it (returns false) and this reopens
+            // the dialog pre-filled with that same rejected number, rather than silently
+            // discarding the attempt or applying a duplicate.
+            int startingValue = device.Priority;
+            while (true)
             {
-                _pairing.SetPriority(device.DeviceId, dialog.NewPriority.Value);
+                using var dialog = new PriorityDialog(startingValue);
+                dialog.ShowDialog(this);
+                if (!dialog.NewPriority.HasValue) return; // cancelled
+                int chosen = dialog.NewPriority.Value;
+                if (chosen == device.Priority) return; // unchanged
+
+                if (_pairing.SetPriority(device.DeviceId, chosen)) return;
+
+                var holder = _pairing.TrustedDevices.FirstOrDefault(d => d.Priority == chosen);
+                MessageBox.Show(this,
+                    $"Priority {chosen} is already used by \"{holder?.Name ?? "another device"}\" - pick a different number.",
+                    "Priority already in use", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                startingValue = chosen;
             }
         };
 

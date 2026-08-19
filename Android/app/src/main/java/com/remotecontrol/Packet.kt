@@ -38,6 +38,14 @@ sealed class Packet {
             JSONObject().put("t", "TEXT").put("text", text).toString()
     }
 
+    /** A pasted/picked image (JPEG-encoded, base64) sent to the PC's own clipboard - the
+     *  same idea as [Text], but the destination is the clipboard instead of the keyboard.
+     *  See ClipboardHelper.SetImage on the Windows side. */
+    data class Image(val base64Jpeg: String) : Packet() {
+        override fun encode(): String =
+            JSONObject().put("t", "IMAGE").put("data", base64Jpeg).toString()
+    }
+
     /** Multiple VK codes pressed together as one real combo (e.g. Ctrl+T) - the PC presses
      *  all of them down, then all up, in a single input batch, not a held-modifier-plus-
      *  separate-tap sequence. Used by custom keys ([CustomKey]) and could be sent directly

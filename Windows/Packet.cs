@@ -8,7 +8,7 @@ enum PacketType
 {
     Move, Scroll, LClick, RClick, MClick, LDown, LUp,
     Key, VkDown, VkUp, VkTap, Text, Combo, Ping,
-    Hello, PairCode, Unknown
+    Hello, PairCode, Image, Unknown
 }
 
 readonly record struct Packet(
@@ -24,7 +24,13 @@ readonly record struct Packet(
     string? Model = null,
     string? Build = null,
     string? Name = null,
-    string? Code = null);
+    string? Code = null,
+    // Base64-encoded JPEG bytes - a phone-clipboard image pasted/sent to the PC's own
+    // clipboard (ClipboardHelper.SetImage), the same idea as Text but for images instead
+    // of keystrokes. Kept as a separate field from Text/Code rather than reusing one of
+    // them - this can be hundreds of KB, worth keeping semantically distinct even though
+    // nothing stops a string field from holding it.
+    string? ImageData = null);
 
 static class PacketCodec
 {
@@ -56,6 +62,7 @@ static class PacketCodec
                 "PING" => PacketType.Ping,
                 "HELLO" => PacketType.Hello,
                 "PAIRCODE" => PacketType.PairCode,
+                "IMAGE" => PacketType.Image,
                 _ => PacketType.Unknown
             };
             if (type == PacketType.Unknown) return null;
@@ -85,8 +92,9 @@ static class PacketCodec
             string? build = root.TryGetProperty("build", out var buildP) ? buildP.GetString() : null;
             string? name = root.TryGetProperty("name", out var nameP) ? nameP.GetString() : null;
             string? code = root.TryGetProperty("code", out var codeP) ? codeP.GetString() : null;
+            string? imageData = root.TryGetProperty("data", out var dataP) ? dataP.GetString() : null;
 
-            return new Packet(type, dx, dy, d, ch, k, text, keys, deviceId, model, build, name, code);
+            return new Packet(type, dx, dy, d, ch, k, text, keys, deviceId, model, build, name, code, imageData);
         }
         catch (JsonException)
         {

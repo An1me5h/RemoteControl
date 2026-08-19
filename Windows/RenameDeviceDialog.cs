@@ -13,13 +13,16 @@ class RenameDeviceDialog : Form
     public RenameDeviceDialog(string currentName)
     {
         Text = "Rename device";
-        FormBorderStyle = FormBorderStyle.FixedDialog;
+        // Sizable + AutoSize (not a hardcoded Height) - same fix as PriorityDialog's, so
+        // this one can't silently clip again the next time its content changes.
+        FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
         BackColor = Color.FromArgb(18, 20, 26);
-        Width = 340;
-        Height = 160;
+        Width = 360;
+        AutoSize = true;
+        MinimumSize = new Size(340, 170);
         Padding = new Padding(20);
         KeyPreview = true;
 
@@ -46,8 +49,11 @@ class RenameDeviceDialog : Form
         var buttonRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            Height = 40,
-            FlowDirection = FlowDirection.RightToLeft
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 40),
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false
         };
 
         var saveButton = new Button

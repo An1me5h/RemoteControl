@@ -235,6 +235,25 @@ class Server
                     // below (nothing was actually pressed, so there's nothing to release).
                     if (_pairing.IsViewOnly(deviceId)) continue;
 
+                    // A pasted/picked image, sent straight to the PC's own clipboard rather
+                    // than through InputInjector - there's no keyboard/mouse action to
+                    // dispatch here, just an OS clipboard write, so this returns to the top
+                    // of the loop immediately after instead of falling through to the
+                    // held-input tracking and Dispatch call below (which are for the
+                    // mouse/keyboard packet types only).
+                    if (packet.Value.Type == PacketType.Image)
+                    {
+                        if (!string.IsNullOrEmpty(packet.Value.ImageData))
+                        {
+                            try
+                            {
+                                ClipboardHelper.SetImage(Convert.FromBase64String(packet.Value.ImageData));
+                            }
+                            catch (Exception) { /* malformed base64 or undecodable image data - drop it, not worth tearing down the connection over */ }
+                        }
+                        continue;
+                    }
+
                     switch (packet.Value.Type)
                     {
                         case PacketType.VkDown:
