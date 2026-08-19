@@ -2,8 +2,12 @@
 
 I am Currently a student and build this app to control my desktop with my mobile, maybe becuase I wanted to operate my screen when I am in my bed, I don't know, I just want to learn and know if it is possible or not !! I do want warn you it is not the safest way to use your device using this method. but if you trust your closed loop network that it is an option.
 
+```
+Download and Install at you own Risk !!
+```
+
 For future update:
-->Planning to make TV application, so you could control that screen as well.
+-> Planning to make TV application, so you could control that screen as well.
 
 # RemoteControl
 
