@@ -47,9 +47,10 @@ class DeviceWindow : Form
         _disconnectDevice = disconnectDevice;
 
         Text = "RemoteControl - Devices";
-        // Widened from the original 480 to fit the trusted-devices table's 4 columns
-        // (Name + 3 date columns) without cramming - see _trustedGrid's column setup below.
-        Width = 680;
+        // Widened from the original 480, then again from 680, to fit the trusted-devices
+        // table's 6 columns (Name + 3 date columns + Permission + Priority) without
+        // cramming - see _trustedGrid's column setup below.
+        Width = 840;
         Height = 660;
         // The pairing panel and its labels below are sized against fixed pixel widths
         // (_pairingPanel.Width = 440, trustedLabel's MaximumSize = 440, _pairingModelLabel's
@@ -60,7 +61,7 @@ class DeviceWindow : Form
         // window from ever getting that narrow in the first place, matching the size the
         // layout was actually designed for (680 now also covers the grid's minimum usable
         // width, not just the pairing panel's).
-        MinimumSize = new Size(680, 420);
+        MinimumSize = new Size(840, 420);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(18, 20, 26);
         Padding = new Padding(16);
@@ -203,6 +204,10 @@ class DeviceWindow : Form
             { Name = "LastConnected", HeaderText = "Last Connected", Width = 130, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
         _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
             { Name = "LastDisconnected", HeaderText = "Last Disconnected", Width = 135, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
+        _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
+            { Name = "Permission", HeaderText = "Permission", Width = 95, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
+        _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
+            { Name = "Priority", HeaderText = "Priority", Width = 60, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
 
         // Right-click doesn't select a row by default the way a left-click does - without
         // this, the context menu would act on whatever row was PREVIOUSLY selected (or
@@ -353,7 +358,9 @@ class DeviceWindow : Form
                 d.Name,
                 d.PairedAt.ToString(DateFormat),
                 d.LastConnectedAt?.ToString(DateFormat) ?? "-",
-                d.LastDisconnectedAt?.ToString(DateFormat) ?? "-");
+                d.LastDisconnectedAt?.ToString(DateFormat) ?? "-",
+                d.ViewOnly ? "View Only" : "Full Control",
+                d.Priority.ToString());
 
             if (d.DeviceId == _connectedDeviceId)
             {
@@ -382,16 +389,27 @@ class DeviceWindow : Form
     {
         var menu = new ContextMenuStrip();
         var disconnectItem = new ToolStripMenuItem("Disconnect");
+        var permissionItem = new ToolStripMenuItem(); // text set fresh in Opening below - depends on the selected device's current ViewOnly state
+        var priorityItem = new ToolStripMenuItem("Set Priority...");
         var renameItem = new ToolStripMenuItem("Rename...");
         var historyItem = new ToolStripMenuItem("View History...");
         menu.Items.Add(disconnectItem);
+        menu.Items.Add(permissionItem);
+        menu.Items.Add(priorityItem);
         menu.Items.Add(renameItem);
         menu.Items.Add(historyItem);
 
         // Cancel the whole menu (rather than just disabling items) when right-clicking empty
         // space below the last row - CellMouseDown's e.RowIndex < 0 guard means nothing gets
         // selected in that case, so there's nothing for these actions to act on anyway.
-        menu.Opening += (_, e) => { if (SelectedDevice() == null) e.Cancel = true; };
+        // Otherwise, relabel permissionItem for whichever row is actually selected - it's one
+        // shared menu instance across every row, not a fresh one per row.
+        menu.Opening += (_, e) =>
+        {
+            var device = SelectedDevice();
+            if (device == null) { e.Cancel = true; return; }
+            permissionItem.Text = device.ViewOnly ? "Set to Full Control" : "Set to View Only";
+        };
 
         // Only makes sense for whichever row IS the live connection right now - Forget
         // already covers "remove a device that isn't currently connected".
@@ -399,6 +417,24 @@ class DeviceWindow : Form
         {
             var device = SelectedDevice();
             if (device != null) _disconnectDevice(device.DeviceId);
+        };
+
+        permissionItem.Click += (_, _) =>
+        {
+            var device = SelectedDevice();
+            if (device != null) _pairing.SetViewOnly(device.DeviceId, !device.ViewOnly);
+        };
+
+        priorityItem.Click += (_, _) =>
+        {
+            var device = SelectedDevice();
+            if (device == null) return;
+            using var dialog = new PriorityDialog(device.Priority);
+            dialog.ShowDialog(this);
+            if (dialog.NewPriority.HasValue && dialog.NewPriority.Value != device.Priority)
+            {
+                _pairing.SetPriority(device.DeviceId, dialog.NewPriority.Value);
+            }
         };
 
         renameItem.Click += (_, _) =>

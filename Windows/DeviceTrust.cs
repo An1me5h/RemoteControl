@@ -18,10 +18,17 @@ record DeviceHistoryEntry(DateTime At, string EventText);
 /// System.Text.Json falls back to these defaults for properties missing from older JSON.
 /// Use the History property (never the raw field) when reading, so callers never have to
 /// null-check.
+/// ViewOnly: can watch the screen stream but every input packet is dropped server-side
+/// (Server.cs) instead of reaching InputInjector - checked fresh per packet, so toggling it
+/// mid-session takes effect immediately, no reconnect needed.
+/// Priority: HIGHER number wins. A connecting device with a higher priority than whoever's
+/// currently connected preempts them (kicks the lower-priority session, takes the slot) -
+/// see PairingCoordinator.TryClaimOrPreempt. Default 0 for every device, so priority is
+/// opt-in: nothing preempts anything until the user actually raises one device above others.
 record TrustedDevice(
     string DeviceId, string Model, string Build, string Name, DateTime PairedAt,
     DateTime? LastConnectedAt = null, DateTime? LastDisconnectedAt = null,
-    List<DeviceHistoryEntry>? History = null)
+    List<DeviceHistoryEntry>? History = null, bool ViewOnly = false, int Priority = 0)
 {
     public List<DeviceHistoryEntry> History { get; init; } = History ?? new List<DeviceHistoryEntry>();
 }

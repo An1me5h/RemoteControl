@@ -3,11 +3,12 @@ using System.Security.Cryptography;
 namespace RemoteControl;
 
 /// Owns trust state, the "only one device at a time" rule, and pairing-mode state. A
-/// single mutable slot - claimed the moment a TCP connection starts its handshake (before
-/// we even know if it'll turn out to be a trusted device or need pairing) and released
-/// when that connection ends - is what enforces "only one device can control it at a
-/// time": a second connection attempt while the slot is held gets rejected immediately,
-/// whether it's an unrecognized device or the very same one reconnecting.
+/// single mutable slot - claimed once a connecting device's HELLO has been read (so its
+/// identity/priority is known) and released when that connection ends - is what enforces
+/// "only one device can control it at a time": a second connection attempt while the slot
+/// is held gets rejected immediately, UNLESS the connecting device is a trusted device
+/// with strictly higher Priority than whoever currently holds it, in which case it
+/// preempts them instead - see TryClaimOrPreempt.
 ///
 /// Pairing itself is opt-in, not always-on: an unrecognized device is rejected outright
 /// unless the user has explicitly opened pairing mode (DeviceWindow's "Add New Device"
@@ -59,19 +60,32 @@ class PairingCoordinator
         get { lock (_lock) return _openCode; }
     }
 
-    public bool TryClaimSlot()
+    /// A monotonically increasing "who owns the slot right now" ticket. Needed because
+    /// preemption (TryClaimOrPreempt below) can hand the slot straight from one connection
+    /// to another WITHOUT ever releasing it in between - the preempted connection's own
+    /// cleanup still reaches its ReleaseSlot call eventually (it doesn't know it's been
+    /// preempted, it just sees its socket die), and that call must be a no-op rather than
+    /// releasing a slot that's since been reclaimed by the device that preempted it. Every
+    /// caller of ReleaseSlot passes back the generation it received when it claimed the
+    /// slot; the release only actually takes effect if that generation is still current.
+    private long _slotGeneration;
+
+    public long? TryClaimSlot()
     {
         lock (_lock)
         {
-            if (_slotClaimed) return false;
+            if (_slotClaimed) return null;
             _slotClaimed = true;
-            return true;
+            return ++_slotGeneration;
         }
     }
 
-    public void ReleaseSlot()
+    public void ReleaseSlot(long generation)
     {
-        lock (_lock) { _slotClaimed = false; }
+        lock (_lock)
+        {
+            if (_slotClaimed && generation == _slotGeneration) _slotClaimed = false;
+        }
     }
 
     public TrustedDevice? FindTrusted(string deviceId, string model, string build)
@@ -178,4 +192,55 @@ class PairingCoordinator
 
     public void Rename(string deviceId, string newName) =>
         UpdateDevice(deviceId, device => WithHistory(device, $"Renamed from '{device.Name}' to '{newName}'") with { Name = newName });
+
+    public void SetViewOnly(string deviceId, bool viewOnly) =>
+        UpdateDevice(deviceId, device => WithHistory(device,
+            viewOnly ? "Set to View Only" : "Set to Full Control") with { ViewOnly = viewOnly });
+
+    public void SetPriority(string deviceId, int priority) =>
+        UpdateDevice(deviceId, device => WithHistory(device,
+            $"Priority changed from {device.Priority} to {priority}") with { Priority = priority });
+
+    /// Server.HandleClientAsync's per-packet check - true if the currently connected
+    /// device (if any) is marked ViewOnly. Queried fresh on every packet rather than cached
+    /// once at connection start, so toggling permission mid-session (DeviceWindow's
+    /// right-click menu) takes effect on the very next packet, no reconnect needed.
+    public bool IsViewOnly(string deviceId)
+    {
+        lock (_lock) return _trusted.FirstOrDefault(d => d.DeviceId == deviceId)?.ViewOnly ?? false;
+    }
+
+    /// Priority's whole point: a connecting device that outranks whoever's currently
+    /// connected should be able to preempt them, not just get rejected as "busy" like any
+    /// other second connection would. Unlike the old always-claim-before-HELLO design, this
+    /// needs the candidate's id up front - Server.cs now reads HELLO before deciding
+    /// whether to claim the slot, specifically so this comparison is possible. Returns the
+    /// new slot generation if claimed (either the slot was free, or preemption won) - null
+    /// if rejected as busy - plus the id of whoever got kicked (null if the slot was simply
+    /// free). The actual socket-closing for a preempted device happens in Server.cs; this
+    /// method only decides slot ownership, it never touches a socket.
+    public (long? generation, string? preemptedDeviceId) TryClaimOrPreempt(string candidateDeviceId, string? currentlyConnectedDeviceId)
+    {
+        lock (_lock)
+        {
+            if (!_slotClaimed)
+            {
+                _slotClaimed = true;
+                return (++_slotGeneration, null);
+            }
+
+            if (currentlyConnectedDeviceId == null) return (null, null); // slot claimed but nobody fully connected yet (mid-handshake) - don't preempt a handshake in progress
+
+            int candidatePriority = _trusted.FirstOrDefault(d => d.DeviceId == candidateDeviceId)?.Priority ?? 0;
+            int currentPriority = _trusted.FirstOrDefault(d => d.DeviceId == currentlyConnectedDeviceId)?.Priority ?? 0;
+            if (candidatePriority <= currentPriority) return (null, null); // strictly greater required - a TIE does not preempt (avoids two equal-priority devices fighting each other on every reconnect)
+
+            // The slot stays claimed throughout - this is a HANDOFF, not a release-then-
+            // reclaim (which would leave a window for some THIRD connection to sneak in
+            // between). Bumping the generation here is what makes the preempted
+            // connection's own eventual ReleaseSlot(itsOldGeneration) call a safe no-op
+            // instead of wrongly releasing the winner's slot - see _slotGeneration's doc.
+            return (++_slotGeneration, currentlyConnectedDeviceId);
+        }
+    }
 }

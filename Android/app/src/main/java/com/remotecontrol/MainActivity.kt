@@ -41,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var screenStatus: TextView
     private lateinit var zoomBadge: TextView
     private lateinit var btnQuality: Button
+    private lateinit var btnScreenOff: Button
     private lateinit var keyboardPanel: ScrollView
     private lateinit var btnKeys: Button
     private lateinit var textPanel: View
@@ -174,6 +175,7 @@ class MainActivity : AppCompatActivity() {
         screenStatus = findViewById(R.id.screenStatus)
         zoomBadge = findViewById(R.id.zoomBadge)
         btnQuality = findViewById(R.id.btnQuality)
+        btnScreenOff = findViewById(R.id.btnScreenOff)
         keyboardPanel = findViewById(R.id.keyboardPanel)
         btnKeys = findViewById(R.id.btnKeys)
         textPanel = findViewById(R.id.textPanel)
@@ -227,14 +229,13 @@ class MainActivity : AppCompatActivity() {
 
         btnQuality.text = ScreenClient.QUALITY_NAMES[qualityLevel()]
         btnQuality.setOnClickListener {
-            val next = (qualityLevel() + 1) % ScreenClient.QUALITY_NAMES.size
-            prefs.edit().putInt("quality", next).apply()
-            btnQuality.text = ScreenClient.QUALITY_NAMES[next]
-            // The preset is chosen by the server when the stream opens, so apply a change
-            // by reconnecting rather than trying to renegotiate mid-stream.
-            screen.stop()
-            startScreenStream()
+            setQualityLevel((qualityLevel() + 1) % ScreenClient.QUALITY_NAMES.size)
         }
+
+        // Jumps straight to OFF in one tap instead of cycling through LOW/MED/HIGH/MAX
+        // first - same underlying action as cycling all the way around to OFF, just
+        // without the intermediate taps.
+        btnScreenOff.setOnClickListener { setQualityLevel(ScreenClient.OFF_QUALITY) }
 
         screen.onStateChange = { state ->
             when (state) {
@@ -254,6 +255,16 @@ class MainActivity : AppCompatActivity() {
     /** Index into ScreenClient.QUALITY_NAMES; cycled by the on-screen quality button. */
     private fun qualityLevel(): Int =
         prefs.getInt("quality", ScreenClient.DEFAULT_QUALITY).coerceIn(0, ScreenClient.QUALITY_NAMES.size - 1)
+
+    /** Shared by btnQuality's cycle-one-step handler and btnScreenOff's jump-straight-to-
+     *  OFF handler - the preset is chosen by the server when the stream opens, so applying
+     *  a change means reconnecting rather than trying to renegotiate mid-stream. */
+    private fun setQualityLevel(level: Int) {
+        prefs.edit().putInt("quality", level).apply()
+        btnQuality.text = ScreenClient.QUALITY_NAMES[level]
+        screen.stop()
+        startScreenStream()
+    }
 
     /** Reuses whatever host the input connection resolved (typed, saved, or from a QR
      *  scan) so the screen stream never asks for the IP a second time. */

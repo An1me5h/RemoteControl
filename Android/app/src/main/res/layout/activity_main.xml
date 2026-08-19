@@ -106,21 +106,45 @@
                     android:textSize="11sp"
                     android:visibility="gone" />
 
-                <Button
-                    android:id="@+id/btnQuality"
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_gravity="bottom|end"
                     android:layout_margin="6dp"
-                    android:minWidth="0dp"
-                    android:minHeight="0dp"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="4dp"
-                    android:background="@drawable/key_bg"
-                    android:textColor="@color/text_primary"
-                    android:textSize="12sp"
-                    android:textAllCaps="false"
-                    android:text="LOW" />
+                    android:orientation="horizontal">
+
+                    <!-- Dedicated OFF button - the quality button cycles LOW/MED/HIGH/MAX/OFF
+                         one step at a time, which meant reaching OFF from e.g. MAX took 4
+                         taps; this jumps straight there in one tap instead. -->
+                    <Button
+                        android:id="@+id/btnScreenOff"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="4dp"
+                        android:background="@drawable/key_bg"
+                        android:textColor="@color/text_primary"
+                        android:textSize="12sp"
+                        android:textAllCaps="false"
+                        android:text="Off" />
+
+                    <Button
+                        android:id="@+id/btnQuality"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="4dp"
+                        android:background="@drawable/key_bg"
+                        android:textColor="@color/text_primary"
+                        android:textSize="12sp"
+                        android:textAllCaps="false"
+                        android:text="LOW" />
+                </LinearLayout>
             </FrameLayout>
 
             <FrameLayout

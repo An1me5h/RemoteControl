@@ -113,8 +113,9 @@ class Server
     {
         client.NoDelay = true;
 
-        bool slotClaimed = false;
+        long? slotGeneration = null;
         bool approved = false;
+        string? deviceId = null;
         var heldVks = new HashSet<int>();
         bool leftButtonDown = false;
 
@@ -129,24 +130,54 @@ class Server
             // side needs to actually parse, so it has to be the BOM-less encoding here.
             using (var writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" })
             {
-                if (!_pairing.TryClaimSlot())
+                using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                handshakeCts.CancelAfter(TimeSpan.FromSeconds(PairingCoordinator.HandshakeTimeoutSeconds));
+
+                var hello = await ReadHelloAsync(reader, writer, handshakeCts.Token);
+                if (hello == null) return; // rejected/timed out - already reported via events
+
+                string label = $"{hello.Value.Name ?? hello.Value.Model} ({hello.Value.Model})";
+                deviceId = hello.Value.DeviceId!;
+
+                // Claiming the slot needs to know WHO is connecting (for the priority
+                // comparison against whoever currently holds it), which is why HELLO is
+                // read before this instead of before the whole handshake like the old
+                // TryClaimSlot-first design.
+                var (generation, preemptedDeviceId) = _pairing.TryClaimOrPreempt(deviceId, _connectedDeviceId);
+                if (generation == null)
                 {
                     await writer.WriteLineAsync("{\"t\":\"REJECTED\",\"reason\":\"busy\"}");
-                    ConnectionRejected?.Invoke("busy (another device is already connected)");
+                    ConnectionRejected?.Invoke($"busy (another device is already connected) - rejected {label}");
                     return;
                 }
-                slotClaimed = true;
+                slotGeneration = generation;
 
-                var handshakeResult = await PerformHandshakeAsync(reader, writer, token);
-                if (handshakeResult == null) return; // rejected/timed out - already reported via events
-                var (deviceLabel, deviceId) = handshakeResult.Value;
+                if (preemptedDeviceId != null)
+                {
+                    ConnectionRejected?.Invoke($"{label} has higher priority - preempting the current connection");
+                    // Closes the loser's socket, driving ITS HandleClientAsync through the
+                    // normal finally-block cleanup (release held input, decrement count,
+                    // fire DeviceDisconnected). That connection's own ReleaseSlot call is a
+                    // safe no-op by then - TryClaimOrPreempt already bumped the slot
+                    // generation to this connection's, so the old generation it captured no
+                    // longer matches.
+                    KickConnectedClient();
+                }
+
+                var handshakeResult = await PerformHandshakeAsync(reader, writer, handshakeCts.Token, hello.Value, label, deviceId);
+                if (handshakeResult == null)
+                {
+                    _pairing.ReleaseSlot(slotGeneration.Value);
+                    slotGeneration = null;
+                    return;
+                }
 
                 approved = true;
                 _connectedClient = client;
                 _connectedDeviceId = deviceId;
                 Interlocked.Increment(ref _clientCount);
                 ClientCountChanged?.Invoke(_clientCount);
-                DeviceConnected?.Invoke(deviceId, deviceLabel);
+                DeviceConnected?.Invoke(deviceId, label);
                 // Covers every successful handshake, not just a first-time pairing (Approve
                 // already logs its own "Paired" entry for that case) - an ordinary reconnect
                 // of an already-trusted device needs its LastConnectedAt/history updated too.
@@ -154,7 +185,29 @@ class Server
 
                 while (!token.IsCancellationRequested)
                 {
-                    string? line = await reader.ReadLineAsync(token);
+                    // The Android side pings every 5s (ConnectionManager.PING_INTERVAL_MS) -
+                    // a fresh, generous 20s window (4x that) on EVERY iteration is a
+                    // heartbeat: if nothing arrives (not even a PING) within it, this
+                    // connection has gone silent - the phone backgrounded/lost network
+                    // without a clean TCP close, e.g. switching apps mid-session - and
+                    // ReadLineAsync would otherwise block far longer than that (the OS can
+                    // take minutes to notice a truly dead socket with no keepalive). Left
+                    // unbounded, this is EXACTLY the bug where a zombie connection keeps
+                    // holding the single-device slot indefinitely, rejecting every real
+                    // reconnect attempt as "busy" while the phone sits on "connecting...".
+                    using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    heartbeatCts.CancelAfter(TimeSpan.FromSeconds(20));
+
+                    string? line;
+                    try
+                    {
+                        line = await reader.ReadLineAsync(heartbeatCts.Token);
+                    }
+                    catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                    {
+                        ConnectionRejected?.Invoke($"{label} went silent (no activity for 20s) - disconnecting");
+                        break;
+                    }
                     if (line == null) break;
 
                     var packet = PacketCodec.Decode(line);
@@ -166,11 +219,24 @@ class Server
 
                     PacketReceived?.Invoke(packet.Value);
 
+                    if (packet.Value.Type == PacketType.Ping)
+                    {
+                        await writer.WriteLineAsync("{\"t\":\"PONG\"}");
+                        continue;
+                    }
+
+                    // Queried fresh on every packet (not cached at connection start) so
+                    // DeviceWindow's right-click "View Only" toggle takes effect on the very
+                    // next packet from an already-connected device - no reconnect needed.
+                    // View-only devices still receive the screen stream (ScreenStreamer only
+                    // gates on Server.HasActiveConnection, not on permission) - they just
+                    // can't move the cursor or type, so every packet past this point is
+                    // dropped before it ever reaches InputInjector or the held-state tracking
+                    // below (nothing was actually pressed, so there's nothing to release).
+                    if (_pairing.IsViewOnly(deviceId)) continue;
+
                     switch (packet.Value.Type)
                     {
-                        case PacketType.Ping:
-                            await writer.WriteLineAsync("{\"t\":\"PONG\"}");
-                            continue;
                         case PacketType.VkDown:
                             heldVks.Add(packet.Value.K);
                             break;
@@ -198,33 +264,38 @@ class Server
             ReleaseHeldInput(heldVks, leftButtonDown);
             if (approved)
             {
-                // Read before clearing - RecordDisconnected needs the id, and this is the
-                // last point it's still available.
-                if (_connectedDeviceId != null) _pairing.RecordDisconnected(_connectedDeviceId);
-                _connectedClient = null;
-                _connectedDeviceId = null;
+                _pairing.RecordDisconnected(deviceId!);
                 Interlocked.Decrement(ref _clientCount);
                 ClientCountChanged?.Invoke(_clientCount);
-                DeviceDisconnected?.Invoke();
+
+                // A preempting connection (see the preemption branch above) sets
+                // _connectedClient/_connectedDeviceId to ITSELF once ITS OWN handshake
+                // succeeds - on a completely separate task from this one, with no ordering
+                // guarantee against this connection's own cleanup finally getting here
+                // first or last. Only touch the shared "who's connected" state if it still
+                // actually points at THIS connection; otherwise a fast winner's state (and
+                // its DeviceConnected UI update) could get wiped out by the loser's cleanup
+                // racing in afterward.
+                if (_connectedDeviceId == deviceId)
+                {
+                    _connectedClient = null;
+                    _connectedDeviceId = null;
+                    DeviceDisconnected?.Invoke();
+                }
             }
-            if (slotClaimed) _pairing.ReleaseSlot();
+            if (slotGeneration.HasValue) _pairing.ReleaseSlot(slotGeneration.Value);
         }
     }
 
-    /// Every connection goes through this before a single input packet is ever dispatched.
-    /// Expects a HELLO first; a recognized (DeviceId+Model+Build all matching a saved
-    /// entry) device is welcomed immediately, silently, so normal reconnects stay seamless.
-    /// An unrecognized device has to prove it knows a one-time code shown in the PC's
-    /// device window before it's trusted and saved. Returns a display label and the
-    /// device's id for the approved device, or null if the handshake was
-    /// rejected/abandoned/timed out.
-    private async Task<(string Label, string DeviceId)?> PerformHandshakeAsync(StreamReader reader, StreamWriter writer, CancellationToken token)
+    /// Reads and validates the very first line of a connection - must be a HELLO with
+    /// DeviceId/Model/Build all present. Split out from the rest of the handshake because
+    /// the caller needs the device's identity BEFORE deciding whether to claim the slot
+    /// (see TryClaimOrPreempt) - identity has to be known first now, not after. Returns
+    /// null (after writing REJECTED) if the line isn't a valid HELLO, or on timeout.
+    private async Task<Packet?> ReadHelloAsync(StreamReader reader, StreamWriter writer, CancellationToken token)
     {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
-        cts.CancelAfter(TimeSpan.FromSeconds(PairingCoordinator.HandshakeTimeoutSeconds));
-
         string? line;
-        try { line = await reader.ReadLineAsync(cts.Token); }
+        try { line = await reader.ReadLineAsync(token); }
         catch (OperationCanceledException) { ConnectionRejected?.Invoke("handshake timed out waiting for HELLO"); return null; }
         if (line == null) return null;
 
@@ -235,14 +306,23 @@ class Server
             ConnectionRejected?.Invoke("sent something other than a valid HELLO first");
             return null;
         }
+        return packet;
+    }
 
-        var hello = packet.Value;
-        string label = $"{hello.Name ?? hello.Model} ({hello.Model})";
-
+    /// Runs the rest of the handshake after HELLO's already been read (see ReadHelloAsync)
+    /// and the slot's already been claimed for this device. A recognized (DeviceId+Model
+    /// +Build all matching a saved entry) device is welcomed immediately, silently, so
+    /// normal reconnects stay seamless. An unrecognized device has to prove it knows a
+    /// one-time code shown in the PC's device window before it's trusted and saved. Returns
+    /// a display label and the device's id for the approved device, or null if the
+    /// handshake was rejected/abandoned/timed out.
+    private async Task<(string Label, string DeviceId)?> PerformHandshakeAsync(
+        StreamReader reader, StreamWriter writer, CancellationToken token, Packet hello, string label, string deviceId)
+    {
         if (_pairing.FindTrusted(hello.DeviceId!, hello.Model!, hello.Build!) != null)
         {
             await writer.WriteLineAsync("{\"t\":\"WELCOME\"}");
-            return (label, hello.DeviceId!);
+            return (label, deviceId);
         }
 
         // Not a recognized device - only allowed in if the user has explicitly opened
@@ -266,7 +346,7 @@ class Server
             for (int attempt = 1; attempt <= PairingCoordinator.MaxCodeAttempts; attempt++)
             {
                 string? codeLine;
-                try { codeLine = await reader.ReadLineAsync(cts.Token); }
+                try { codeLine = await reader.ReadLineAsync(token); }
                 catch (OperationCanceledException) { ConnectionRejected?.Invoke("pairing timed out"); return null; }
                 if (codeLine == null) return null;
 
@@ -275,7 +355,7 @@ class Server
                 {
                     _pairing.Approve(hello.DeviceId!, hello.Model!, hello.Build!, hello.Name ?? hello.Model!);
                     await writer.WriteLineAsync("{\"t\":\"WELCOME\"}");
-                    return (label, hello.DeviceId!);
+                    return (label, deviceId);
                 }
 
                 int attemptsLeft = PairingCoordinator.MaxCodeAttempts - attempt;
