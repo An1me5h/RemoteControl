@@ -119,7 +119,8 @@ class PairingCoordinator
         lock (_lock)
         {
             _trusted.RemoveAll(d => d.DeviceId == deviceId);
-            device = new TrustedDevice(deviceId, model, build, name, DateTime.Now);
+            device = new TrustedDevice(deviceId, model, build, name, DateTime.Now,
+                History: new List<DeviceHistoryEntry> { new(DateTime.Now, "Paired") });
             _trusted.Add(device);
             DeviceTrustStore.Save(_trusted);
             _openCode = null; // single-use: this open/scan cycle is done
@@ -142,4 +143,39 @@ class PairingCoordinator
         }
         if (removed != null) DeviceForgotten?.Invoke(removed);
     }
+
+    /// Fired whenever a trusted device's OWN record changes in place (connected,
+    /// disconnected, renamed) - as opposed to DeviceApproved/DeviceForgotten, which are
+    /// about a device being added to or removed from the trusted list entirely.
+    public event Action<TrustedDevice>? DeviceUpdated;
+
+    private TrustedDevice? UpdateDevice(string deviceId, Func<TrustedDevice, TrustedDevice> update)
+    {
+        TrustedDevice? updated;
+        lock (_lock)
+        {
+            int index = _trusted.FindIndex(d => d.DeviceId == deviceId);
+            if (index < 0) return null;
+            updated = update(_trusted[index]);
+            _trusted[index] = updated;
+            DeviceTrustStore.Save(_trusted);
+        }
+        DeviceUpdated?.Invoke(updated);
+        return updated;
+    }
+
+    private static TrustedDevice WithHistory(TrustedDevice device, string eventText) =>
+        device with { History = new List<DeviceHistoryEntry>(device.History) { new(DateTime.Now, eventText) } };
+
+    /// Called on EVERY successful handshake (Server.HandleClientAsync), whether this
+    /// connection just got approved for the first time (Approve() above already logged
+    /// "Paired" for that case) or it's an ordinary reconnect of an already-trusted device.
+    public void RecordConnected(string deviceId) =>
+        UpdateDevice(deviceId, device => WithHistory(device, "Connected") with { LastConnectedAt = DateTime.Now });
+
+    public void RecordDisconnected(string deviceId) =>
+        UpdateDevice(deviceId, device => WithHistory(device, "Disconnected") with { LastDisconnectedAt = DateTime.Now });
+
+    public void Rename(string deviceId, string newName) =>
+        UpdateDevice(deviceId, device => WithHistory(device, $"Renamed from '{device.Name}' to '{newName}'") with { Name = newName });
 }

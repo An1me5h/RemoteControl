@@ -2,11 +2,29 @@ using System.Text.Json;
 
 namespace RemoteControl;
 
+/// One entry in a trusted device's event log - shown via DeviceWindow's right-click
+/// "View History". EventText is plain, human-readable ("Connected", "Disconnected",
+/// "Renamed from 'Old' to 'New'") rather than a structured enum + args, since it's only
+/// ever displayed, never parsed back.
+record DeviceHistoryEntry(DateTime At, string EventText);
+
 /// A phone that's completed pairing at least once. Identity is the triple (DeviceId,
 /// Model, Build) - DeviceId alone (Android's ANDROID_ID) would already be enough in
 /// practice, but checking all three is what the user asked for ("check if everything
 /// matches") and costs nothing extra.
-record TrustedDevice(string DeviceId, string Model, string Build, string Name, DateTime PairedAt);
+///
+/// LastConnectedAt/LastDisconnectedAt/History are all nullable/optional so an OLD
+/// trusted_devices.json (saved before this feature existed) still deserializes cleanly -
+/// System.Text.Json falls back to these defaults for properties missing from older JSON.
+/// Use the History property (never the raw field) when reading, so callers never have to
+/// null-check.
+record TrustedDevice(
+    string DeviceId, string Model, string Build, string Name, DateTime PairedAt,
+    DateTime? LastConnectedAt = null, DateTime? LastDisconnectedAt = null,
+    List<DeviceHistoryEntry>? History = null)
+{
+    public List<DeviceHistoryEntry> History { get; init; } = History ?? new List<DeviceHistoryEntry>();
+}
 
 /// Persists trusted devices as a JSON array in %AppData%\RemoteControl\trusted_devices.json
 /// - not next to the exe, since that can be read-only (e.g. under Program Files).

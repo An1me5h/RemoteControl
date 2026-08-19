@@ -13,6 +13,8 @@ class DeviceWindow : Form
     private readonly PairingCoordinator _pairing;
     private readonly string _localAddress;
     private readonly int _port;
+    private readonly Action _requestExit;
+    private readonly Action<string> _disconnectDevice;
 
     private readonly Label _statusLabel;
     private readonly Button _addDeviceButton;
@@ -20,23 +22,45 @@ class DeviceWindow : Form
     private readonly Label _pairingCodeLabel;
     private readonly Label _pairingModelLabel;
     private readonly PictureBox _pairingQrBox;
-    private readonly ListBox _trustedList;
+    private readonly DataGridView _trustedGrid;
     private readonly Button _forgetButton;
 
     private readonly List<TrustedDevice> _listedDevices = new();
 
+    // Which device (by id) the highlighted row belongs to - kept in sync by
+    // ShowConnected/ShowDisconnected, used by RefreshTrustedList to color that one row and
+    // by the row context menu to decide whether "Disconnect" applies to it.
+    private string? _connectedDeviceId;
+
+    private const string DateFormat = "yyyy-MM-dd HH:mm";
+
     private const string DefaultPairingText =
         "Scan this QR with the new device's RemoteControl app (CONFIG tab → Scan QR to Connect), or type the code shown below:";
 
-    public DeviceWindow(PairingCoordinator pairing, string localAddress, int port)
+    public DeviceWindow(PairingCoordinator pairing, string localAddress, int port,
+                        Action requestExit, Action<string> disconnectDevice)
     {
         _pairing = pairing;
         _localAddress = localAddress;
         _port = port;
+        _requestExit = requestExit;
+        _disconnectDevice = disconnectDevice;
 
         Text = "RemoteControl - Devices";
-        Width = 480;
+        // Widened from the original 480 to fit the trusted-devices table's 4 columns
+        // (Name + 3 date columns) without cramming - see _trustedGrid's column setup below.
+        Width = 680;
         Height = 660;
+        // The pairing panel and its labels below are sized against fixed pixel widths
+        // (_pairingPanel.Width = 440, trustedLabel's MaximumSize = 440, _pairingModelLabel's
+        // MaximumSize = 400) rather than the window's actual current width - simpler than
+        // recomputing wrap widths on every Resize, but it means shrinking the window below
+        // what those fixed widths need makes the text wrap wider than the visible window and
+        // spill past its right edge instead of narrowing along with it. MinimumSize stops the
+        // window from ever getting that narrow in the first place, matching the size the
+        // layout was actually designed for (680 now also covers the grid's minimum usable
+        // width, not just the pairing panel's).
+        MinimumSize = new Size(680, 420);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(18, 20, 26);
         Padding = new Padding(16);
@@ -59,6 +83,12 @@ class DeviceWindow : Form
             ForeColor = Color.Gainsboro,
             Font = new Font("Segoe UI", 11f, FontStyle.Bold),
             Text = "No device connected",
+            // Unlike trustedLabel/_pairingModelLabel (already fixed, see the 2026-08-19
+            // text-overflow entry), this one had NO width cap at all - "Connected: " plus a
+            // long device model/name (some Android model strings run long) could extend
+            // straight past the window's edge instead of wrapping. Matches the same 440
+            // budget the other labels already wrap against.
+            MaximumSize = new Size(440, 0),
             Margin = new Padding(0, 0, 0, 12)
         };
 
@@ -128,19 +158,63 @@ class DeviceWindow : Form
         {
             AutoSize = true,
             ForeColor = Color.Gainsboro,
-            Text = "Trusted devices - select one and click Forget to revoke it",
-            MaximumSize = new Size(440, 0),
+            Text = "Trusted devices - right-click a row for more options, or select one and click Forget to revoke it",
+            MaximumSize = new Size(620, 0),
             Margin = new Padding(0, 0, 0, 6)
         };
 
-        _trustedList = new ListBox
+        _trustedGrid = new DataGridView
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(24, 27, 35),
-            ForeColor = Color.Gainsboro,
+            BackgroundColor = Color.FromArgb(24, 27, 35),
             BorderStyle = BorderStyle.None,
-            Font = new Font("Segoe UI", 9.5f)
+            Font = new Font("Segoe UI", 9.5f),
+            AllowUserToAddRows = false,
+            AllowUserToDeleteRows = false,
+            AllowUserToResizeRows = false,
+            ReadOnly = true,
+            RowHeadersVisible = false,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect = false,
+            // EnableHeadersVisualStyles must be off, or Windows' own visual-styles renderer
+            // draws the header background/text and ignores ColumnHeadersDefaultCellStyle
+            // entirely - a common WinForms dark-theme gotcha, same species of bug as the
+            // FlatStyle.Flat button colors fixed earlier in this file.
+            EnableHeadersVisualStyles = false,
+            GridColor = Color.FromArgb(40, 45, 58),
+            CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
+            RowTemplate = { Height = 26 }
         };
+        _trustedGrid.DefaultCellStyle.BackColor = Color.FromArgb(24, 27, 35);
+        _trustedGrid.DefaultCellStyle.ForeColor = Color.Gainsboro;
+        _trustedGrid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(45, 52, 66);
+        _trustedGrid.DefaultCellStyle.SelectionForeColor = Color.Gainsboro;
+        _trustedGrid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(30, 34, 44);
+        _trustedGrid.ColumnHeadersDefaultCellStyle.ForeColor = Color.Gainsboro;
+        _trustedGrid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+        _trustedGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+        _trustedGrid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
+
+        _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
+            { Name = "Name", HeaderText = "Name", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+        _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
+            { Name = "Paired", HeaderText = "Paired", Width = 120, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
+        _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
+            { Name = "LastConnected", HeaderText = "Last Connected", Width = 130, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
+        _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
+            { Name = "LastDisconnected", HeaderText = "Last Disconnected", Width = 135, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
+
+        // Right-click doesn't select a row by default the way a left-click does - without
+        // this, the context menu would act on whatever row was PREVIOUSLY selected (or
+        // none), not the one actually under the cursor.
+        _trustedGrid.CellMouseDown += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Right || e.RowIndex < 0) return;
+            _trustedGrid.ClearSelection();
+            _trustedGrid.Rows[e.RowIndex].Selected = true;
+            _trustedGrid.CurrentCell = _trustedGrid.Rows[e.RowIndex].Cells[0];
+        };
+        _trustedGrid.ContextMenuStrip = BuildRowContextMenu();
 
         _forgetButton = new Button
         {
@@ -155,7 +229,7 @@ class DeviceWindow : Form
         _forgetButton.Click += (_, _) => ForgetSelected();
 
         var listContainer = new Panel { Dock = DockStyle.Fill };
-        listContainer.Controls.Add(_trustedList);
+        listContainer.Controls.Add(_trustedGrid);
         listContainer.Controls.Add(_forgetButton);
 
         root.Controls.Add(_statusLabel, 0, 0);
@@ -168,20 +242,35 @@ class DeviceWindow : Form
         RefreshTrustedList();
         _pairing.DeviceApproved += _ => RefreshTrustedListThreadSafe();
         _pairing.DeviceForgotten += _ => RefreshTrustedListThreadSafe();
+        // Fired by RecordConnected/RecordDisconnected/Rename (Pairing.cs) - any change to a
+        // device's OWN record (not just being added/removed from the trusted list) needs
+        // the same refresh so the Paired/Last Connected/Last Disconnected columns and the
+        // Name column stay current.
+        _pairing.DeviceUpdated += _ => RefreshTrustedListThreadSafe();
         _pairing.PairingOpened += code => RunOnUiThread(() => OnPairingOpened(code));
         _pairing.PairingClosed += () => RunOnUiThread(OnPairingClosed);
         _pairing.PairingAttemptStarted += model => RunOnUiThread(() => OnAttemptStarted(model));
         _pairing.PairingAttemptEnded += () => RunOnUiThread(OnAttemptEnded);
     }
 
-    public void ShowConnected(string label)
+    public void ShowConnected(string deviceId, string label)
     {
-        RunOnUiThread(() => _statusLabel.Text = $"Connected: {label}");
+        RunOnUiThread(() =>
+        {
+            _statusLabel.Text = $"Connected: {label}";
+            _connectedDeviceId = deviceId;
+            RefreshTrustedList(); // so the newly-connected device's row gets highlighted
+        });
     }
 
     public void ShowDisconnected()
     {
-        RunOnUiThread(() => _statusLabel.Text = "No device connected");
+        RunOnUiThread(() =>
+        {
+            _statusLabel.Text = "No device connected";
+            _connectedDeviceId = null;
+            RefreshTrustedList(); // clears whichever row was highlighted
+        });
     }
 
     private void ToggleAddDevice()
@@ -249,27 +338,104 @@ class DeviceWindow : Form
 
     private void RefreshTrustedList()
     {
+        // Remember the selected device (by id, not row index - rows get rebuilt below) so a
+        // context-menu action or Forget click doesn't lose the user's selection just because
+        // a DeviceUpdated/DeviceApproved event happened to refresh the grid around the same time.
+        string? previouslySelectedId = SelectedDevice()?.DeviceId;
+
         _listedDevices.Clear();
         _listedDevices.AddRange(_pairing.TrustedDevices);
-        _trustedList.Items.Clear();
+        _trustedGrid.Rows.Clear();
+
         foreach (var d in _listedDevices)
         {
-            _trustedList.Items.Add($"{d.Name}  -  paired {d.PairedAt:yyyy-MM-dd HH:mm}");
+            int rowIndex = _trustedGrid.Rows.Add(
+                d.Name,
+                d.PairedAt.ToString(DateFormat),
+                d.LastConnectedAt?.ToString(DateFormat) ?? "-",
+                d.LastDisconnectedAt?.ToString(DateFormat) ?? "-");
+
+            if (d.DeviceId == _connectedDeviceId)
+            {
+                var row = _trustedGrid.Rows[rowIndex];
+                row.DefaultCellStyle.BackColor = Color.FromArgb(28, 58, 48);
+                row.DefaultCellStyle.ForeColor = Color.FromArgb(150, 230, 190);
+                row.DefaultCellStyle.SelectionBackColor = Color.FromArgb(38, 74, 62);
+                row.DefaultCellStyle.SelectionForeColor = Color.FromArgb(170, 245, 210);
+            }
+
+            if (d.DeviceId == previouslySelectedId) _trustedGrid.Rows[rowIndex].Selected = true;
         }
+    }
+
+    /// The device the currently selected grid row corresponds to, or null if nothing's
+    /// selected (or the grid is empty) - shared by Forget, the row context menu's three
+    /// actions, and RefreshTrustedList's own selection-preserving logic.
+    private TrustedDevice? SelectedDevice()
+    {
+        if (_trustedGrid.CurrentRow == null) return null;
+        int index = _trustedGrid.CurrentRow.Index;
+        return index >= 0 && index < _listedDevices.Count ? _listedDevices[index] : null;
+    }
+
+    private ContextMenuStrip BuildRowContextMenu()
+    {
+        var menu = new ContextMenuStrip();
+        var disconnectItem = new ToolStripMenuItem("Disconnect");
+        var renameItem = new ToolStripMenuItem("Rename...");
+        var historyItem = new ToolStripMenuItem("View History...");
+        menu.Items.Add(disconnectItem);
+        menu.Items.Add(renameItem);
+        menu.Items.Add(historyItem);
+
+        // Cancel the whole menu (rather than just disabling items) when right-clicking empty
+        // space below the last row - CellMouseDown's e.RowIndex < 0 guard means nothing gets
+        // selected in that case, so there's nothing for these actions to act on anyway.
+        menu.Opening += (_, e) => { if (SelectedDevice() == null) e.Cancel = true; };
+
+        // Only makes sense for whichever row IS the live connection right now - Forget
+        // already covers "remove a device that isn't currently connected".
+        disconnectItem.Click += (_, _) =>
+        {
+            var device = SelectedDevice();
+            if (device != null) _disconnectDevice(device.DeviceId);
+        };
+
+        renameItem.Click += (_, _) =>
+        {
+            var device = SelectedDevice();
+            if (device == null) return;
+            using var dialog = new RenameDeviceDialog(device.Name);
+            dialog.ShowDialog(this);
+            if (dialog.NewName != null && dialog.NewName != device.Name)
+            {
+                _pairing.Rename(device.DeviceId, dialog.NewName);
+            }
+        };
+
+        historyItem.Click += (_, _) =>
+        {
+            var device = SelectedDevice();
+            if (device == null) return;
+            using var dialog = new DeviceHistoryDialog(device);
+            dialog.ShowDialog(this);
+        };
+
+        return menu;
     }
 
     private void ForgetSelected()
     {
-        int index = _trustedList.SelectedIndex;
-        if (index < 0 || index >= _listedDevices.Count) return;
-        _pairing.Forget(_listedDevices[index].DeviceId);
+        var device = SelectedDevice();
+        if (device != null) _pairing.Forget(device.DeviceId);
     }
 
     /// FlatStyle.Flat buttons need every color set explicitly, or they fall back to
     /// WinForms' light-theme defaults - the near-invisible-text bug this fixes. Also adds
     /// a visible border and hover/press feedback so buttons don't look flat-out inert
-    /// against the dark background.
-    private static void StyleButton(Button button)
+    /// against the dark background. Internal (not private) so CloseConfirmDialog's buttons
+    /// get the exact same treatment instead of duplicating it.
+    internal static void StyleButton(Button button)
     {
         button.FlatAppearance.BorderColor = Color.FromArgb(70, 76, 92);
         button.FlatAppearance.BorderSize = 1;
@@ -287,10 +453,33 @@ class DeviceWindow : Form
         action();
     }
 
+    /// Clicking X here used to just silently Hide() - technically correct (RemoteControl is
+    /// a tray app, it was never going to actually quit) but gave the user no indication it
+    /// was still running and controllable rather than genuinely closed. Now asks explicitly.
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        // A close triggered by ExitThread() itself (Application shutting down for real, e.g.
+        // via the tray menu's Exit item or CloseConfirmDialog's own Exit choice below) must
+        // not loop back into asking again or cancelling - only an interactive click on this
+        // window's own X button should prompt.
+        if (e.CloseReason != CloseReason.UserClosing)
+        {
+            base.OnFormClosing(e);
+            return;
+        }
+
         e.Cancel = true;
-        Hide(); // keep it alive so the tray menu can reopen it instantly
+        using var confirm = new CloseConfirmDialog();
+        confirm.ShowDialog(this);
+
+        if (confirm.Result == CloseConfirmDialog.Choice.Exit)
+        {
+            _requestExit();
+        }
+        else
+        {
+            Hide(); // keep it alive so the tray menu can reopen it instantly
+        }
         base.OnFormClosing(e);
     }
 }

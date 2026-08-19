@@ -35,7 +35,7 @@ class Server
     public event Action<Packet>? PacketReceived;
     public event Action<string>? UndecodableLineReceived;
     public event Action<int, bool>? HeldInputReleased;
-    public event Action<string>? DeviceConnected;
+    public event Action<string, string>? DeviceConnected; // (deviceId, label)
     public event Action? DeviceDisconnected;
     public event Action<string>? ConnectionRejected;
 
@@ -46,6 +46,15 @@ class Server
         {
             if (device.DeviceId == _connectedDeviceId) KickConnectedClient();
         };
+    }
+
+    /// DeviceWindow's right-click "Disconnect" - kicks the live session WITHOUT revoking
+    /// trust (unlike Forget), so the device can just reconnect normally afterward. A no-op
+    /// if deviceId isn't the one actually connected right now (e.g. the row was stale by
+    /// the time the click landed) - safe to call without re-checking first.
+    public void DisconnectDevice(string deviceId)
+    {
+        if (deviceId == _connectedDeviceId) KickConnectedClient();
     }
 
     /// Forcibly closes the current live connection (if any) - called when the device
@@ -137,7 +146,11 @@ class Server
                 _connectedDeviceId = deviceId;
                 Interlocked.Increment(ref _clientCount);
                 ClientCountChanged?.Invoke(_clientCount);
-                DeviceConnected?.Invoke(deviceLabel);
+                DeviceConnected?.Invoke(deviceId, deviceLabel);
+                // Covers every successful handshake, not just a first-time pairing (Approve
+                // already logs its own "Paired" entry for that case) - an ordinary reconnect
+                // of an already-trusted device needs its LastConnectedAt/history updated too.
+                _pairing.RecordConnected(deviceId);
 
                 while (!token.IsCancellationRequested)
                 {
@@ -185,6 +198,9 @@ class Server
             ReleaseHeldInput(heldVks, leftButtonDown);
             if (approved)
             {
+                // Read before clearing - RecordDisconnected needs the id, and this is the
+                // last point it's still available.
+                if (_connectedDeviceId != null) _pairing.RecordDisconnected(_connectedDeviceId);
                 _connectedClient = null;
                 _connectedDeviceId = null;
                 Interlocked.Decrement(ref _clientCount);

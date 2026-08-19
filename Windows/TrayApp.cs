@@ -20,6 +20,11 @@ class TrayApp : ApplicationContext
     private readonly string _localAddress;
     private readonly CancellationTokenSource _cts = new();
 
+    // Blinks the tray icon's red dot on/off while a device is connected (see TrayIcons) -
+    // only runs during that state, so the icon sits still at Idle the rest of the time.
+    private readonly System.Windows.Forms.Timer _blinkTimer;
+    private bool _blinkDotOn;
+
     // All console output goes through this queue instead of calling Console.WriteLine
     // directly. Server.PacketReceived fires synchronously on Server.HandleClientAsync's
     // per-client dispatch loop, right before InputInjector.Dispatch - a direct
@@ -52,7 +57,8 @@ class TrayApp : ApplicationContext
         Log("Waiting for a phone to connect...");
 
         _pairing = new PairingCoordinator();
-        _deviceWindow = new DeviceWindow(_pairing, _localAddress, Server.Port);
+        _server = new Server(_pairing);
+        _deviceWindow = new DeviceWindow(_pairing, _localAddress, Server.Port, ExitThread, _server.DisconnectDevice);
         if (foreground) _deviceWindow.Show();
 
         _statusItem = new ToolStripMenuItem(StatusText(0)) { Enabled = false };
@@ -81,11 +87,20 @@ class TrayApp : ApplicationContext
             ContextMenuStrip = menu
         };
 
-        _server = new Server(_pairing);
-        _server.ClientCountChanged += OnClientCountChanged;
-        _server.DeviceConnected += label =>
+        // Timer.Tick fires on the UI thread already (a WinForms Timer, not a
+        // System.Threading one), so it can touch _icon directly - no Invoke needed here,
+        // unlike OnClientCountChanged below which is called from server callback threads.
+        _blinkTimer = new System.Windows.Forms.Timer { Interval = 700 };
+        _blinkTimer.Tick += (_, _) =>
         {
-            _deviceWindow.ShowConnected(label);
+            _blinkDotOn = !_blinkDotOn;
+            _icon.Icon = _blinkDotOn ? TrayIcons.ConnectedDotOn : TrayIcons.ConnectedDotOff;
+        };
+
+        _server.ClientCountChanged += OnClientCountChanged;
+        _server.DeviceConnected += (deviceId, label) =>
+        {
+            _deviceWindow.ShowConnected(deviceId, label);
             Log($"[{Now()}] Connected: {label}");
         };
         _server.DeviceDisconnected += () =>
@@ -145,7 +160,17 @@ class TrayApp : ApplicationContext
             return;
         }
 
-        _icon.Icon = count > 0 ? TrayIcons.Connected : TrayIcons.Idle;
+        if (count > 0)
+        {
+            _blinkDotOn = true;
+            _icon.Icon = TrayIcons.ConnectedDotOn;
+            _blinkTimer.Start();
+        }
+        else
+        {
+            _blinkTimer.Stop();
+            _icon.Icon = TrayIcons.Idle;
+        }
         _statusItem.Text = StatusText(count);
         _icon.Text = Truncate(count > 0
             ? $"RemoteControl - {_localAddress}:{Server.Port} - {count} connected"
@@ -164,6 +189,8 @@ class TrayApp : ApplicationContext
         _cts.Cancel();
         _server.Stop();
         _screenStreamer.Stop();
+        _blinkTimer.Stop();
+        _blinkTimer.Dispose();
         _icon.Visible = false;
         _icon.Dispose();
         _deviceWindow.Dispose();
