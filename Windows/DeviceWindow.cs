@@ -96,8 +96,10 @@ class DeviceWindow : Form
         _addDeviceButton = new Button
         {
             Text = "+ Add New Device",
-            Width = 200,
-            Height = 32,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(200, 0),
+            Padding = new Padding(8, 6, 8, 6),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(30, 34, 44),
             ForeColor = Color.Gainsboro,
@@ -196,18 +198,27 @@ class DeviceWindow : Form
         _trustedGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
         _trustedGrid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
 
+        // Every column is independently user-resizable (AutoSizeMode.None on all of them,
+        // including Name) - Name used to be AutoSizeMode.Fill, which is what made dragging
+        // any OTHER column's border feel like it was resizing backwards: a Fill column
+        // silently absorbs whatever width a neighboring drag frees up, so the border under
+        // the cursor doesn't move the way a plain drag normally would. Widths below are
+        // just reasonable starting points - AutoResizeColumns (after the constructor's
+        // first RefreshTrustedList, further down) immediately fits every column to its
+        // actual header/content on first show, same as a spreadsheet's "fit to content".
+        _trustedGrid.AllowUserToResizeColumns = true;
         _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { Name = "Name", HeaderText = "Name", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+            { Name = "Name", HeaderText = "Name", Width = 160, MinimumWidth = 80, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
         _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { Name = "Paired", HeaderText = "Paired", Width = 120, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
+            { Name = "Paired", HeaderText = "Paired", Width = 120, MinimumWidth = 60, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
         _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { Name = "LastConnected", HeaderText = "Last Connected", Width = 130, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
+            { Name = "LastConnected", HeaderText = "Last Connected", Width = 130, MinimumWidth = 60, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
         _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { Name = "LastDisconnected", HeaderText = "Last Disconnected", Width = 135, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
+            { Name = "LastDisconnected", HeaderText = "Last Disconnected", Width = 135, MinimumWidth = 60, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
         _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { Name = "Permission", HeaderText = "Permission", Width = 95, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
+            { Name = "Permission", HeaderText = "Permission", Width = 95, MinimumWidth = 60, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
         _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { Name = "Priority", HeaderText = "Priority", Width = 60, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
+            { Name = "Priority", HeaderText = "Priority", Width = 60, MinimumWidth = 50, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
 
         // Right-click doesn't select a row by default the way a left-click does - without
         // this, the context menu would act on whatever row was PREVIOUSLY selected (or
@@ -225,7 +236,10 @@ class DeviceWindow : Form
         {
             Text = "Forget selected device",
             Dock = DockStyle.Bottom,
-            Height = 32,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 32),
+            Padding = new Padding(8, 6, 8, 6),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(30, 34, 44),
             ForeColor = Color.Gainsboro
@@ -245,6 +259,14 @@ class DeviceWindow : Form
         Controls.Add(root);
 
         RefreshTrustedList();
+        // One-time fit-to-content, right after the grid has real rows to measure against -
+        // exactly the "show it all fit to text at the start" the columns' hardcoded widths
+        // above were only ever meant as a fallback for. Deliberately NOT repeated on every
+        // later RefreshTrustedList (device connects/disconnects, etc.) - once the user has
+        // dragged a column to their own preferred width, a background refresh re-fitting it
+        // out from under them would be exactly the unpredictable-resize complaint this is
+        // fixing, just triggered a different way.
+        _trustedGrid.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
         _pairing.DeviceApproved += _ => RefreshTrustedListThreadSafe();
         _pairing.DeviceForgotten += _ => RefreshTrustedListThreadSafe();
         // Fired by RecordConnected/RecordDisconnected/Rename (Pairing.cs) - any change to a

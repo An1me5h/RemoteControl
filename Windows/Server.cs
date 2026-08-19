@@ -154,7 +154,7 @@ class Server
 
                 if (preemptedDeviceId != null)
                 {
-                    ConnectionRejected?.Invoke($"{label} has higher priority - preempting the current connection");
+                    ConnectionRejected?.Invoke($"{label} has a better (lower-numbered) priority - preempting the current connection");
                     // Closes the loser's socket, driving ITS HandleClientAsync through the
                     // normal finally-block cleanup (release held input, decrement count,
                     // fire DeviceDisconnected). That connection's own ReleaseSlot call is a

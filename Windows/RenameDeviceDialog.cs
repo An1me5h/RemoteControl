@@ -26,7 +26,7 @@ class RenameDeviceDialog : Form
         var label = new Label
         {
             Dock = DockStyle.Top,
-            Height = 22,
+            AutoSize = true,
             ForeColor = Color.Gainsboro,
             Font = new Font("Segoe UI", 9.5f),
             Text = "Device name:"

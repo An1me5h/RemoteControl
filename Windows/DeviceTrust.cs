@@ -21,10 +21,13 @@ record DeviceHistoryEntry(DateTime At, string EventText);
 /// ViewOnly: can watch the screen stream but every input packet is dropped server-side
 /// (Server.cs) instead of reaching InputInjector - checked fresh per packet, so toggling it
 /// mid-session takes effect immediately, no reconnect needed.
-/// Priority: HIGHER number wins. A connecting device with a higher priority than whoever's
-/// currently connected preempts them (kicks the lower-priority session, takes the slot) -
-/// see PairingCoordinator.TryClaimOrPreempt. Default 0 for every device, so priority is
-/// opt-in: nothing preempts anything until the user actually raises one device above others.
+/// Priority: LOWER number wins - 1 is the best/highest priority a device can have
+/// (PriorityDialog's picker won't go below 1). A connecting device with a lower priority
+/// number than whoever's currently connected preempts them (kicks the weaker session,
+/// takes the slot) - see PairingCoordinator.TryClaimOrPreempt. Default 0 for every device
+/// means "no priority set", not "priority zero" - it's treated as weaker than every
+/// explicitly-numbered device, so priority stays opt-in: nothing preempts anything until
+/// the user actually assigns a real number to at least one device.
 record TrustedDevice(
     string DeviceId, string Model, string Build, string Name, DateTime PairedAt,
     DateTime? LastConnectedAt = null, DateTime? LastDisconnectedAt = null,

@@ -231,9 +231,18 @@ class PairingCoordinator
 
             if (currentlyConnectedDeviceId == null) return (null, null); // slot claimed but nobody fully connected yet (mid-handshake) - don't preempt a handshake in progress
 
-            int candidatePriority = _trusted.FirstOrDefault(d => d.DeviceId == candidateDeviceId)?.Priority ?? 0;
-            int currentPriority = _trusted.FirstOrDefault(d => d.DeviceId == currentlyConnectedDeviceId)?.Priority ?? 0;
-            if (candidatePriority <= currentPriority) return (null, null); // strictly greater required - a TIE does not preempt (avoids two equal-priority devices fighting each other on every reconnect)
+            // LOWER wins - 1 is the best/highest priority a device can have (PriorityDialog
+            // won't even let the user pick anything below 1). A device that's never had a
+            // priority set (Priority == 0, TrustedDevice's default) has no claim at all -
+            // Rank() maps that to int.MaxValue so it always compares as the weakest possible
+            // value: it can't preempt anyone, and no priority-less device can preempt IT
+            // either (MaxValue is never strictly less than MaxValue), which is what keeps
+            // this opt-in - nothing preempts anything until the user explicitly assigns a
+            // real number to at least the device trying to take over.
+            static int Rank(int priority) => priority <= 0 ? int.MaxValue : priority;
+            int candidateRank = Rank(_trusted.FirstOrDefault(d => d.DeviceId == candidateDeviceId)?.Priority ?? 0);
+            int currentRank = Rank(_trusted.FirstOrDefault(d => d.DeviceId == currentlyConnectedDeviceId)?.Priority ?? 0);
+            if (candidateRank >= currentRank) return (null, null); // strictly lower required - a TIE does not preempt (avoids two equal-priority devices fighting each other on every reconnect)
 
             // The slot stays claimed throughout - this is a HANDOFF, not a release-then-
             // reclaim (which would leave a window for some THIRD connection to sneak in

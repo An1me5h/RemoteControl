@@ -4,9 +4,13 @@ using System.Windows.Forms;
 namespace RemoteControl;
 
 /// Small prompt for DeviceWindow's right-click "Set Priority..." - pre-fills the current
-/// value, returns the new one (or null if cancelled). Higher wins ties on connection: a
-/// device with strictly higher priority than whoever's currently connected preempts them -
-/// see PairingCoordinator.TryClaimOrPreempt.
+/// value, returns the new one (or null if cancelled). LOWER wins: 1 is the best/highest
+/// priority a device can have, and a device with a strictly lower number than whoever's
+/// currently connected preempts them - see PairingCoordinator.TryClaimOrPreempt. 1 is the
+/// floor of the selectable range (not 0) - a device that's never had a priority set is
+/// treated as having none at all (weaker than every explicitly-numbered device, never
+/// preempts and never gets preempted by another unset device), not as secretly ranking
+/// above 1.
 class PriorityDialog : Form
 {
     private readonly NumericUpDown _priorityBox;
@@ -28,18 +32,21 @@ class PriorityDialog : Form
         var label = new Label
         {
             Dock = DockStyle.Top,
-            Height = 40,
+            AutoSize = true,
+            MaximumSize = new Size(280, 0),
             ForeColor = Color.Gainsboro,
             Font = new Font("Segoe UI", 9.5f),
-            Text = "Higher priority preempts a connected device with a lower one:"
+            Text = "Lower number = higher priority. 1 preempts everything; a device with " +
+                   "no priority set never preempts anyone.",
+            Margin = new Padding(0, 0, 0, 6)
         };
 
         _priorityBox = new NumericUpDown
         {
             Dock = DockStyle.Top,
-            Minimum = 0,
+            Minimum = 1,
             Maximum = 100,
-            Value = Math.Clamp(currentPriority, 0, 100),
+            Value = Math.Clamp(currentPriority <= 0 ? 1 : currentPriority, 1, 100),
             BackColor = Color.FromArgb(30, 34, 44),
             ForeColor = Color.Gainsboro,
             BorderStyle = BorderStyle.FixedSingle,
