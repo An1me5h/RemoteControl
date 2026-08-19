@@ -29,9 +29,15 @@ class CloseConfirmDialog : Form
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(18, 20, 26);
-        Width = 460;
+        // Width was 460 until a real bounds check (not just eyeballing the rendered
+        // image) caught "Minimize to Tray" sitting at X=-14 relative to its own parent
+        // FlowLayoutPanel - 14px of its left border was genuinely being clipped, not just
+        // "eh, a little tight." The two buttons need 410px combined; 460 only gave the row
+        // 396px to work with after the form's own padding/chrome. Bumped with real buffer
+        // this time instead of another guess.
+        Width = 500;
         AutoSize = true;
-        MinimumSize = new Size(440, 210);
+        MinimumSize = new Size(480, 210);
         Padding = new Padding(20);
         KeyPreview = true;
 
@@ -42,7 +48,7 @@ class CloseConfirmDialog : Form
             // See PriorityDialog's label for why MaximumSize.Width is required, not
             // optional, for a Dock=Top AutoSize label to actually wrap instead of rendering
             // one clipped line.
-            MaximumSize = new Size(410, 0),
+            MaximumSize = new Size(450, 0),
             ForeColor = Color.Gainsboro,
             Font = new Font("Segoe UI", 9.5f),
             Text = "RemoteControl is still running in the background - your phone can " +

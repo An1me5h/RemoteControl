@@ -32,6 +32,11 @@ class DeviceWindow : Form
     // by the row context menu to decide whether "Disconnect" applies to it.
     private string? _connectedDeviceId;
 
+    // Guards the one-time column auto-fit (see Shown handler in the constructor) against
+    // running more than once, in case Shown ends up firing again on a later Hide()+Show()
+    // cycle - only the very first real layout should decide the columns' widths.
+    private bool _columnsAutoFitted;
+
     private const string DateFormat = "yyyy-MM-dd HH:mm";
 
     private const string DefaultPairingText =
@@ -47,10 +52,15 @@ class DeviceWindow : Form
         _disconnectDevice = disconnectDevice;
 
         Text = "RemoteControl - Devices";
-        // Widened from the original 480, then again from 680, to fit the trusted-devices
-        // table's 6 columns (Name + 3 date columns + Permission + Priority) without
-        // cramming - see _trustedGrid's column setup below.
-        Width = 840;
+        // Widened from 480 -> 680 -> 840 -> 1180 across this file's history, each time to
+        // fit the trusted-devices table's growing column count without cramming. This last
+        // jump is bigger than the others because it's based on a REAL measurement, not
+        // another guess: an off-screen render (with the Shown-hooked AutoResizeColumns
+        // below actually having run) showed the 6 fit-to-content columns needing 1076px
+        // combined against a client area that only had 778px to give them at the old 840
+        // window width - a ~300px shortfall, which is exactly what pushed Permission and
+        // Priority off the visible right edge into horizontal-scroll territory.
+        Width = 1180;
         Height = 660;
         // The pairing panel and its labels below are sized against fixed pixel widths
         // (_pairingPanel.Width = 440, trustedLabel's MaximumSize = 440, _pairingModelLabel's
@@ -61,7 +71,7 @@ class DeviceWindow : Form
         // window from ever getting that narrow in the first place, matching the size the
         // layout was actually designed for (680 now also covers the grid's minimum usable
         // width, not just the pairing panel's).
-        MinimumSize = new Size(840, 420);
+        MinimumSize = new Size(900, 420);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(18, 20, 26);
         Padding = new Padding(16);
@@ -259,14 +269,27 @@ class DeviceWindow : Form
         Controls.Add(root);
 
         RefreshTrustedList();
-        // One-time fit-to-content, right after the grid has real rows to measure against -
-        // exactly the "show it all fit to text at the start" the columns' hardcoded widths
-        // above were only ever meant as a fallback for. Deliberately NOT repeated on every
-        // later RefreshTrustedList (device connects/disconnects, etc.) - once the user has
-        // dragged a column to their own preferred width, a background refresh re-fitting it
-        // out from under them would be exactly the unpredictable-resize complaint this is
-        // fixing, just triggered a different way.
-        _trustedGrid.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
+        // One-time fit-to-content - exactly the "show it all fit to text at the start" the
+        // columns' hardcoded widths above were only ever meant as a fallback for.
+        // Deliberately NOT called here directly: AutoResizeColumns needs the grid to
+        // already have a real window handle and a completed Dock layout pass to measure
+        // text correctly - calling it inline in the constructor (before the Form has ever
+        // been shown) silently produced wrong, too-narrow widths, confirmed by an
+        // off-screen render showing "Permissic"/"Priori" still truncated despite this call
+        // being right here. Hooking Shown, guarded by a flag so it only actually runs once
+        // even if Shown ends up firing again on a later Hide()+Show() cycle, is what
+        // guarantees a real handle exists first. Also deliberately NOT repeated on every
+        // later RefreshTrustedList (device connects/disconnects, etc.) even after that one
+        // run - once the user has dragged a column to their own preferred width, refitting
+        // it out from under them on a background refresh would be exactly the
+        // unpredictable-resize complaint this whole thing is fixing, just triggered a
+        // different way.
+        Shown += (_, _) =>
+        {
+            if (_columnsAutoFitted) return;
+            _columnsAutoFitted = true;
+            _trustedGrid.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
+        };
         _pairing.DeviceApproved += _ => RefreshTrustedListThreadSafe();
         _pairing.DeviceForgotten += _ => RefreshTrustedListThreadSafe();
         // Fired by RecordConnected/RecordDisconnected/Rename (Pairing.cs) - any change to a

@@ -339,10 +339,11 @@
                         android:backgroundTint="@color/accent"
                         android:text="Send" />
 
-                    <!-- Sends a copied/pasted image straight to the PC's clipboard,
-                         separate from the typed-text flow above - pasting an image and
-                         sending it are two independent actions, so this row only shows
-                         once an image has actually been pasted. -->
+                    <!-- Sends the picked image(s) to the PC, separate from the typed-text
+                         flow above - picking and sending are two independent actions, so
+                         this row only shows once something's actually been picked.
+                         ivPastedImage previews just the first pick; btnSendImage's own
+                         text says how many are actually staged when there's more than one. -->
                     <LinearLayout
                         android:id="@+id/imagePreviewRow"
                         android:layout_width="match_parent"
@@ -378,12 +379,16 @@
                             android:text="✕" />
                     </LinearLayout>
 
+                    <!-- Clipboard-paste detection turned out too unreliable across
+                         different source apps (dropped in favor of just this) - the
+                         system Photo Picker always works and supports picking several at
+                         once. -->
                     <Button
-                        android:id="@+id/btnPasteImage"
+                        android:id="@+id/btnPickImage"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:text="Paste Image from Clipboard" />
+                        android:text="Pick Images from Gallery" />
                 </LinearLayout>
             </FrameLayout>
 
