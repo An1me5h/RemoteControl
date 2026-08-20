@@ -58,6 +58,11 @@ class TrayApp : ApplicationContext
 
         _pairing = new PairingCoordinator();
         _server = new Server(_pairing);
+        // Constructed here (before DeviceWindow, moved up from its old spot further down)
+        // purely so the tray menu items below can capture it - Start() still happens later,
+        // in its usual place alongside _server.Start().
+        _screenStreamer = new ScreenStreamer(() => _server.HasActiveConnection);
+        _screenStreamer.Log += msg => Log($"[{Now()}] [screen] {msg}");
         _deviceWindow = new DeviceWindow(_pairing, _localAddress, Server.Port, ExitThread, _server.DisconnectDevice);
         if (foreground) _deviceWindow.Show();
 
@@ -70,12 +75,36 @@ class TrayApp : ApplicationContext
             _deviceWindow.WindowState = FormWindowState.Normal;
             _deviceWindow.BringToFront();
         });
+
+        // Declared before selectRegionItem below so its Click handler can reference it
+        // directly - a screen-stream-wide setting, not tied to any one device, hence
+        // living in the tray menu rather than DeviceWindow.
+        var resetRegionItem = new ToolStripMenuItem("Reset Screen Region to Full Screen") { Enabled = false };
+        resetRegionItem.Click += (_, _) =>
+        {
+            _screenStreamer.SetCaptureRegion(null);
+            resetRegionItem.Enabled = false;
+        };
+        var selectRegionItem = new ToolStripMenuItem("Select Screen Region...");
+        selectRegionItem.Click += (_, _) =>
+        {
+            using var picker = new RegionPickerForm();
+            picker.ShowDialog();
+            if (picker.SelectedRegion.HasValue)
+            {
+                _screenStreamer.SetCaptureRegion(picker.SelectedRegion);
+                resetRegionItem.Enabled = true;
+            }
+        };
+
         var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => ExitThread());
 
         var menu = new ContextMenuStrip();
         menu.Items.Add(_statusItem);
         menu.Items.Add(copyItem);
         menu.Items.Add(devicesItem);
+        menu.Items.Add(selectRegionItem);
+        menu.Items.Add(resetRegionItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(exitItem);
 
@@ -121,14 +150,6 @@ class TrayApp : ApplicationContext
         _pairing.PairingAttemptEnded += () => Log($"[{Now()}] Pairing attempt ended.");
         _pairing.DeviceApproved += device => Log($"[{Now()}] Paired and trusted: {device.Name}");
         _pairing.DeviceForgotten += device => Log($"[{Now()}] Forgot device: {device.Name}");
-
-        // Separate socket (port 5202) from Server's 5201 - screen frames are binary JPEG,
-        // input packets are newline-delimited JSON, so they never share framing. Log goes
-        // through the same queue as everything else, never a direct Console.WriteLine.
-        // () => _server.HasActiveConnection gates streaming on a real paired connection
-        // existing - see ScreenStreamer's _isDeviceConnected doc comment.
-        _screenStreamer = new ScreenStreamer(() => _server.HasActiveConnection);
-        _screenStreamer.Log += msg => Log($"[{Now()}] [screen] {msg}");
 
         _server.Start();
         _screenStreamer.Start();

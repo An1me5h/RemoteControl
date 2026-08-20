@@ -53,11 +53,49 @@ class ScreenStreamer
     private volatile int _presetIndex;
     public QualityPreset CurrentPreset => Presets[_presetIndex];
 
+    // Rectangle isn't a type `volatile`/Interlocked can guard directly, hence the lock -
+    // read once per capture-loop iteration, written from the tray menu's region picker on
+    // the UI thread. null means "full screen" (the original, still-default behavior).
+    private readonly object _regionLock = new();
+    private Rectangle? _captureRegion;
+
+    /// Sets (or clears, with null) the screen region the capture loop grabs instead of the
+    /// whole primary monitor - narrower capture means less GDI/downscale work per frame
+    /// (CopyFromScreen and the bilinear resize both cost roughly proportional to source
+    /// pixel count), and lets the same bandwidth/quality budget go toward more detail in
+    /// the area that actually matters instead of the whole desktop.
+    public void SetCaptureRegion(Rectangle? region)
+    {
+        lock (_regionLock) { _captureRegion = region; }
+        // Without this, a viewer connecting (or already streaming) right after this call
+        // gets served whatever the capture loop cached from BEFORE the change - one frame
+        // at the OLD region/size - since SendMjpegStreamAsync always sends _latestFrame
+        // immediately if it's non-null, with no way to tell it's stale. Clearing it forces
+        // every viewer to wait for a genuinely fresh frame reflecting the new region.
+        InvalidateLatestFrame();
+        Log?.Invoke(region.HasValue
+            ? $"Capture region set to {region.Value.Width}x{region.Value.Height} at ({region.Value.X},{region.Value.Y})"
+            : "Capture region reset to full screen");
+    }
+
+    private void InvalidateLatestFrame()
+    {
+        lock (_frameLock) { _latestFrame = null; }
+    }
+
+    private Rectangle GetCaptureRegion(int screenWidth, int screenHeight)
+    {
+        lock (_regionLock) { return _captureRegion ?? new Rectangle(0, 0, screenWidth, screenHeight); }
+    }
+
     private void SetPreset(int index)
     {
         int clamped = Math.Clamp(index, 0, Presets.Length - 1);
         if (clamped == _presetIndex) return;
         _presetIndex = clamped;
+        // Same reasoning as SetCaptureRegion - without this a viewer could get one stale
+        // frame at the OLD resolution immediately after requesting a quality change.
+        InvalidateLatestFrame();
         Log?.Invoke($"Quality -> {Presets[clamped].Name} ({Presets[clamped].Width}px, q{Presets[clamped].Jpeg}, {Presets[clamped].Fps}fps)");
     }
 
@@ -105,11 +143,15 @@ class ScreenStreamer
         int screenWidth = GetSystemMetrics(SM_CXSCREEN);
         int screenHeight = GetSystemMetrics(SM_CYSCREEN);
 
-        using var fullFrame = new Bitmap(screenWidth, screenHeight, PixelFormat.Format32bppArgb);
-        using var fullGraphics = Graphics.FromImage(fullFrame);
-
         ImageCodecInfo jpegCodec = GetJpegCodec();
         var jpegBuffer = new MemoryStream();
+
+        // Sized to the ACTIVE capture region, not always the full screen - recreated
+        // whenever the region changes (SetCaptureRegion, checked once per loop iteration
+        // below), same lazy-recreate pattern the preset-driven scaledFrame already used.
+        Bitmap? captureFrame = null;
+        Graphics? captureGraphics = null;
+        Rectangle activeRegion = default;
 
         Bitmap? scaledFrame = null;
         Graphics? scaledGraphics = null;
@@ -134,13 +176,24 @@ class ScreenStreamer
 
             try
             {
+                Rectangle region = GetCaptureRegion(screenWidth, screenHeight);
+                if (region != activeRegion)
+                {
+                    activeRegion = region;
+                    captureGraphics?.Dispose();
+                    captureFrame?.Dispose();
+                    captureFrame = new Bitmap(activeRegion.Width, activeRegion.Height, PixelFormat.Format32bppArgb);
+                    captureGraphics = Graphics.FromImage(captureFrame);
+                    activePreset = -1; // force the scaled-frame block below to re-fit against the new region size too
+                }
+
                 if (activePreset != _presetIndex)
                 {
                     activePreset = _presetIndex;
                     QualityPreset preset = Presets[activePreset];
 
-                    scaledWidth = Math.Min(preset.Width, screenWidth);
-                    scaledHeight = screenHeight * scaledWidth / screenWidth;
+                    scaledWidth = Math.Min(preset.Width, activeRegion.Width);
+                    scaledHeight = activeRegion.Height * scaledWidth / activeRegion.Width;
 
                     scaledGraphics?.Dispose();
                     scaledFrame?.Dispose();
@@ -155,14 +208,14 @@ class ScreenStreamer
 
                     frameInterval = TimeSpan.FromMilliseconds(1000.0 / preset.Fps);
 
-                    Log?.Invoke($"Capturing {screenWidth}x{screenHeight} -> {scaledWidth}x{scaledHeight} @ {preset.Fps}fps, q{preset.Jpeg}");
+                    Log?.Invoke($"Capturing {activeRegion.Width}x{activeRegion.Height} at ({activeRegion.X},{activeRegion.Y}) -> {scaledWidth}x{scaledHeight} @ {preset.Fps}fps, q{preset.Jpeg}");
                 }
 
-                if (scaledFrame == null || scaledGraphics == null || encoderSettings == null) continue;
+                if (captureFrame == null || captureGraphics == null || scaledFrame == null || scaledGraphics == null || encoderSettings == null) continue;
 
-                fullGraphics.CopyFromScreen(0, 0, 0, 0, fullFrame.Size, CopyPixelOperation.SourceCopy);
-                if (DrawCursor) OverlayCursor(fullGraphics);
-                scaledGraphics.DrawImage(fullFrame, 0, 0, scaledWidth, scaledHeight);
+                captureGraphics.CopyFromScreen(activeRegion.X, activeRegion.Y, 0, 0, captureFrame.Size, CopyPixelOperation.SourceCopy);
+                if (DrawCursor) OverlayCursor(captureGraphics, activeRegion);
+                scaledGraphics.DrawImage(captureFrame, 0, 0, scaledWidth, scaledHeight);
 
                 jpegBuffer.SetLength(0);
                 scaledFrame.Save(jpegBuffer, jpegCodec, encoderSettings);
@@ -183,6 +236,8 @@ class ScreenStreamer
             if (remaining > TimeSpan.Zero) await Task.Delay(remaining, token).ContinueWith(_ => { });
         }
 
+        captureGraphics?.Dispose();
+        captureFrame?.Dispose();
         scaledGraphics?.Dispose();
         scaledFrame?.Dispose();
         encoderSettings?.Dispose();
@@ -204,7 +259,12 @@ class ScreenStreamer
     // GDI bitmaps) every frame.
     private static readonly Dictionary<IntPtr, Point> _cursorHotspots = new();
 
-    private static void OverlayCursor(Graphics target)
+    /// <paramref name="region"/> is what's actually being captured (screen coordinates) -
+    /// the real cursor position (also screen coordinates) needs that origin subtracted to
+    /// land at the right spot on a bitmap that only covers the region, not the whole
+    /// screen. Drawing at an out-of-bounds offset (cursor currently outside the captured
+    /// region) is harmless - DrawIconEx clips to the target the same as any other GDI call.
+    private static void OverlayCursor(Graphics target, Rectangle region)
     {
         var cursorInfo = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
         if (!GetCursorInfo(ref cursorInfo)) return;
@@ -212,8 +272,8 @@ class ScreenStreamer
         if (cursorInfo.hCursor == IntPtr.Zero) return;
 
         Point hotspot = GetCursorHotspot(cursorInfo.hCursor);
-        int drawX = cursorInfo.ptScreenPos.x - hotspot.X;
-        int drawY = cursorInfo.ptScreenPos.y - hotspot.Y;
+        int drawX = cursorInfo.ptScreenPos.x - hotspot.X - region.X;
+        int drawY = cursorInfo.ptScreenPos.y - hotspot.Y - region.Y;
 
         IntPtr hdc = target.GetHdc();
         try { DrawIconEx(hdc, drawX, drawY, cursorInfo.hCursor, 0, 0, 0, IntPtr.Zero, DI_NORMAL); }
