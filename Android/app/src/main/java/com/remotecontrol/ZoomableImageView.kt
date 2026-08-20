@@ -110,8 +110,31 @@ class ZoomableImageView @JvmOverloads constructor(
                     applyTransform()
                 }
             }
+            MotionEvent.ACTION_POINTER_UP -> {
+                // A pinch ending by lifting ONE finger (the common case - people rarely
+                // lift both at once) left lastTouchX/Y stale at wherever it was from
+                // before the pinch even started, since nothing updated it while 2+
+                // fingers were down. The very next single-finger ACTION_MOVE (once this
+                // drops back to 1 finger) then diffed against that stale point instead of
+                // the remaining finger's real position, producing a sudden jump - a
+                // second, independent cause of the reported "jumping while zooming", on
+                // top of the pinch-focus centering bug already fixed. event.x/y (index 0)
+                // can be the LIFTING finger, not the one staying down - same reasoning as
+                // TrackpadView's resetOriginExcluding, which this mirrors.
+                resetLastTouchExcluding(event, event.actionIndex)
+            }
         }
         return true
+    }
+
+    private fun resetLastTouchExcluding(event: MotionEvent, excludeIndex: Int) {
+        for (i in 0 until event.pointerCount) {
+            if (i != excludeIndex) {
+                lastTouchX = event.getX(i)
+                lastTouchY = event.getY(i)
+                return
+            }
+        }
     }
 
     fun resetZoom() {
