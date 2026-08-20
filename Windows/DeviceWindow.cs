@@ -19,6 +19,7 @@ class DeviceWindow : Form
     private readonly Label _statusLabel;
     private readonly Label _tailscaleLabel;
     private readonly Button _addDeviceButton;
+    private readonly Button _addRemoteDeviceButton;
     private readonly Panel _pairingPanel;
     private readonly Label _pairingCodeLabel;
     private readonly Label _pairingModelLabel;
@@ -32,6 +33,15 @@ class DeviceWindow : Form
     // ShowConnected/ShowDisconnected, used by RefreshTrustedList to color that one row and
     // by the row context menu to decide whether "Disconnect" applies to it.
     private string? _connectedDeviceId;
+    // Whether the CURRENTLY connected device (above) arrived over Tailscale - drives the
+    // status label's "via LAN"/"via Tailscale" suffix and which row (primary vs the
+    // synthetic remote-access row) gets the "connected" highlight in RefreshTrustedList.
+    private bool _connectedViaRemote;
+
+    // Which host the currently-OPEN pairing code/QR targets - set when either "Add"
+    // button opens pairing, read by OnPairingOpened/OnAttemptEnded to rebuild the right
+    // QR and instruction text. Irrelevant while pairing is closed.
+    private bool _pairingIsRemote;
 
     // Guards the one-time column auto-fit (see Shown handler in the constructor) against
     // running more than once, in case Shown ends up firing again on a later Hide()+Show()
@@ -39,9 +49,6 @@ class DeviceWindow : Form
     private bool _columnsAutoFitted;
 
     private const string DateFormat = "yyyy-MM-dd HH:mm";
-
-    private const string DefaultPairingText =
-        "Scan this QR with the new device's RemoteControl app (CONFIG tab → Scan QR to Connect), or type the code shown below:";
 
     public DeviceWindow(PairingCoordinator pairing, string localAddress, int port,
                         Action requestExit, Action<string> disconnectDevice)
@@ -163,7 +170,29 @@ class DeviceWindow : Form
 
         _addDeviceButton = new Button
         {
-            Text = "+ Add New Device",
+            Text = "+ Add New Device (LAN)",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(200, 0),
+            Padding = new Padding(8, 6, 8, 6),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(30, 34, 44),
+            ForeColor = Color.Gainsboro,
+            Margin = new Padding(0, 0, 8, 12)
+        };
+        StyleButton(_addDeviceButton);
+        _addDeviceButton.Click += (_, _) => TogglePairing(remote: false);
+
+        // Separate button rather than a toggle on the same one - the code/QR this
+        // generates is only reachable from off this LAN (it embeds the Tailscale IP, not
+        // the LAN one - see BuildPairUri), so scanning it while standing right next to the
+        // PC on the LAN would connect over Tailscale needlessly. Keeping the two visually
+        // distinct also fixes the actual bug report: the old single button's QR always
+        // used the LAN address regardless of intent, so "pairing for remote access" was
+        // silently establishing a LAN connection instead.
+        _addRemoteDeviceButton = new Button
+        {
+            Text = "+ Add Remote Device (Tailscale)",
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             MinimumSize = new Size(200, 0),
@@ -173,8 +202,18 @@ class DeviceWindow : Form
             ForeColor = Color.Gainsboro,
             Margin = new Padding(0, 0, 0, 12)
         };
-        StyleButton(_addDeviceButton);
-        _addDeviceButton.Click += (_, _) => ToggleAddDevice();
+        StyleButton(_addRemoteDeviceButton);
+        _addRemoteDeviceButton.Click += (_, _) => TogglePairing(remote: true);
+
+        var addDeviceRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = false,
+            Margin = new Padding(0)
+        };
+        addDeviceRow.Controls.Add(_addDeviceButton);
+        addDeviceRow.Controls.Add(_addRemoteDeviceButton);
 
         _pairingPanel = new Panel
         {
@@ -202,7 +241,7 @@ class DeviceWindow : Form
             ForeColor = Color.Gainsboro,
             Font = new Font("Segoe UI", 9.5f),
             MaximumSize = new Size(400, 0),
-            Text = DefaultPairingText,
+            Text = PairingInstructionText(remote: false),
             Margin = new Padding(0, 0, 0, 8)
         };
         _pairingCodeLabel = new Label
@@ -286,8 +325,6 @@ class DeviceWindow : Form
         _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
             { Name = "Permission", HeaderText = "Permission", Width = 95, MinimumWidth = 60, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
         _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { Name = "RemoteAccess", HeaderText = "Remote Access", Width = 110, MinimumWidth = 60, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
-        _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
             { Name = "Priority", HeaderText = "Priority", Width = 60, MinimumWidth = 50, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
 
         // Right-click doesn't select a row by default the way a left-click does - without
@@ -323,7 +360,7 @@ class DeviceWindow : Form
 
         root.Controls.Add(_statusLabel, 0, 0);
         root.Controls.Add(tailscaleRow, 0, 1);
-        root.Controls.Add(_addDeviceButton, 0, 2);
+        root.Controls.Add(addDeviceRow, 0, 2);
         root.Controls.Add(_pairingPanel, 0, 3);
         root.Controls.Add(trustedLabel, 0, 4);
         root.Controls.Add(listContainer, 0, 5);
@@ -371,12 +408,13 @@ class DeviceWindow : Form
         _pairing.PairingAttemptEnded += () => RunOnUiThread(OnAttemptEnded);
     }
 
-    public void ShowConnected(string deviceId, string label)
+    public void ShowConnected(string deviceId, string label, bool isRemote)
     {
         RunOnUiThread(() =>
         {
-            _statusLabel.Text = $"Connected: {label}";
+            _statusLabel.Text = $"Connected: {label} — via {(isRemote ? "Tailscale (remote)" : "LAN")}";
             _connectedDeviceId = deviceId;
+            _connectedViaRemote = isRemote;
             RefreshTrustedList(); // so the newly-connected device's row gets highlighted
         });
     }
@@ -387,24 +425,49 @@ class DeviceWindow : Form
         {
             _statusLabel.Text = "No device connected";
             _connectedDeviceId = null;
+            _connectedViaRemote = false;
             RefreshTrustedList(); // clears whichever row was highlighted
         });
     }
 
-    private void ToggleAddDevice()
+    /// Shared by both "Add" buttons. Closing (the button already open acts as Cancel) always
+    /// just closes, regardless of which mode is currently showing. Opening while the OTHER
+    /// button is showing isn't reachable - see the buttons' Enabled wiring in OnPairingOpened.
+    private void TogglePairing(bool remote)
     {
-        if (_pairing.OpenCode == null) _pairing.OpenPairing();
-        else _pairing.ClosePairing();
+        if (_pairing.OpenCode != null) { _pairing.ClosePairing(); return; }
+
+        if (remote && TailscaleHelper.GetIPv4() == null)
+        {
+            MessageBox.Show(this,
+                "Tailscale isn't connected on this PC right now - connect it first (see the Tailscale row above), then try again.",
+                "Tailscale not detected", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        _pairingIsRemote = remote;
+        _pairing.OpenPairing();
     }
 
     private void OnPairingOpened(string code)
     {
-        _pairingModelLabel.Text = DefaultPairingText;
+        _pairingModelLabel.Text = PairingInstructionText(_pairingIsRemote);
         _pairingCodeLabel.Text = code;
         _pairingQrBox.Image?.Dispose();
-        _pairingQrBox.Image = GenerateQrImage(BuildPairUri(code));
+        // Resolved fresh at QR-build time rather than reusing the Tailscale-row label's
+        // cached text - this is the exact bug being fixed: the QR/link this generates has
+        // to embed whichever address actually matches the button that was clicked, or
+        // scanning it silently connects over the wrong path regardless of intent.
+        string host = _pairingIsRemote ? (TailscaleHelper.GetIPv4() ?? _localAddress) : _localAddress;
+        _pairingQrBox.Image = GenerateQrImage(BuildPairUri(code, host));
         _pairingPanel.Visible = true;
-        _addDeviceButton.Text = "Cancel Pairing";
+        // Whichever button opened this becomes Cancel; the other is disabled outright
+        // (not just left alone) so it can't start a second, conflicting pairing session -
+        // only one code/QR can ever be open at a time (PairingCoordinator._openCode).
+        _addDeviceButton.Text = _pairingIsRemote ? "+ Add New Device (LAN)" : "Cancel Pairing";
+        _addDeviceButton.Enabled = !_pairingIsRemote;
+        _addRemoteDeviceButton.Text = _pairingIsRemote ? "Cancel Pairing" : "+ Add Remote Device (Tailscale)";
+        _addRemoteDeviceButton.Enabled = _pairingIsRemote;
         Show();
         WindowState = FormWindowState.Normal;
         BringToFront();
@@ -414,8 +477,18 @@ class DeviceWindow : Form
     private void OnPairingClosed()
     {
         _pairingPanel.Visible = false;
-        _addDeviceButton.Text = "+ Add New Device";
+        _addDeviceButton.Text = "+ Add New Device (LAN)";
+        _addDeviceButton.Enabled = true;
+        _addRemoteDeviceButton.Text = "+ Add Remote Device (Tailscale)";
+        _addRemoteDeviceButton.Enabled = true;
     }
+
+    /// The pairing panel's instruction text, aware of which button opened it - this is
+    /// what actually tells the user (before they scan anything) whether the code/QR they're
+    /// about to use only works on this LAN or specifically requires Tailscale.
+    private static string PairingInstructionText(bool remote) => remote
+        ? "Scan this QR with the new/remote device's RemoteControl app (CONFIG tab → Scan QR to Connect), or type the code shown below. This pairing is for REMOTE (Tailscale) access - the device must already be on your tailnet to use it."
+        : "Scan this QR with the new device's RemoteControl app (CONFIG tab → Scan QR to Connect), or type the code shown below. This pairing is for devices on this LAN - it won't work from outside your home network.";
 
     /// A device is actively mid-handshake against the already-open code - the code/QR are
     /// already showing (pairing has to be open for this to fire at all), this just names
@@ -434,7 +507,7 @@ class DeviceWindow : Form
         // Only relevant if pairing is still open (a failed/timed-out attempt doesn't close
         // it - see PairingCoordinator) - revert the label back to the generic instruction
         // now that nobody's actively mid-handshake against it.
-        if (_pairing.OpenCode != null) _pairingModelLabel.Text = DefaultPairingText;
+        if (_pairing.OpenCode != null) _pairingModelLabel.Text = PairingInstructionText(_pairingIsRemote);
     }
 
     private void RefreshTailscaleLabel()
@@ -447,9 +520,12 @@ class DeviceWindow : Form
 
     /// Matches the `remotecontrol://pair` intent-filter MainActivity registers on the
     /// Android side - scanning this (with the app installed) opens straight into it with
-    /// host/port pre-filled and the code auto-submitted, no typing needed.
-    private string BuildPairUri(string code) =>
-        $"remotecontrol://pair?host={Uri.EscapeDataString(_localAddress)}&port={_port}&code={code}";
+    /// host/port pre-filled and the code auto-submitted, no typing needed. `host` is
+    /// whichever address actually matches the pairing mode - see OnPairingOpened - NOT
+    /// always _localAddress; that was the bug: a QR meant for remote approval used to
+    /// embed the LAN address regardless, so scanning it just connected over the LAN.
+    private string BuildPairUri(string code, string host) =>
+        $"remotecontrol://pair?host={Uri.EscapeDataString(host)}&port={_port}&code={code}";
 
     private static Image GenerateQrImage(string payload)
     {
@@ -462,39 +538,69 @@ class DeviceWindow : Form
 
     private void RefreshTrustedListThreadSafe() => RunOnUiThread(RefreshTrustedList);
 
+    private const string RemoteRowNamePrefix = "    ↳ ";
+
     private void RefreshTrustedList()
     {
         // Remember the selected device (by id, not row index - rows get rebuilt below) so a
         // context-menu action or Forget click doesn't lose the user's selection just because
-        // a DeviceUpdated/DeviceApproved event happened to refresh the grid around the same time.
+        // a DeviceUpdated/DeviceApproved event happened to refresh the grid around the same
+        // time. Also remember WHICH of a device's (possibly two) rows was selected - both
+        // map to the same DeviceId, so previouslySelectedId alone can't tell them apart, and
+        // silently reselecting the wrong one would be a real annoyance if the remote sub-row
+        // was selected (e.g. about to click Revoke) when an unrelated event refreshed the grid.
         string? previouslySelectedId = SelectedDevice()?.DeviceId;
+        bool previouslySelectedWasRemoteRow =
+            _trustedGrid.CurrentRow?.Cells[0].Value is string s && s.StartsWith(RemoteRowNamePrefix);
 
+        var devices = _pairing.TrustedDevices;
         _listedDevices.Clear();
-        _listedDevices.AddRange(_pairing.TrustedDevices);
         _trustedGrid.Rows.Clear();
 
-        foreach (var d in _listedDevices)
+        foreach (var d in devices)
         {
+            _listedDevices.Add(d);
             int rowIndex = _trustedGrid.Rows.Add(
                 d.Name,
                 d.PairedAt.ToString(DateFormat),
                 d.LastConnectedAt?.ToString(DateFormat) ?? "-",
                 d.LastDisconnectedAt?.ToString(DateFormat) ?? "-",
                 d.ViewOnly ? "View Only" : "Full Control",
-                d.RemoteApproved ? "Approved" : "LAN only",
                 d.Priority.ToString());
 
-            if (d.DeviceId == _connectedDeviceId)
-            {
-                var row = _trustedGrid.Rows[rowIndex];
-                row.DefaultCellStyle.BackColor = Color.FromArgb(28, 58, 48);
-                row.DefaultCellStyle.ForeColor = Color.FromArgb(150, 230, 190);
-                row.DefaultCellStyle.SelectionBackColor = Color.FromArgb(38, 74, 62);
-                row.DefaultCellStyle.SelectionForeColor = Color.FromArgb(170, 245, 210);
-            }
+            if (d.DeviceId == _connectedDeviceId) HighlightRow(_trustedGrid.Rows[rowIndex]);
+            if (d.DeviceId == previouslySelectedId && !previouslySelectedWasRemoteRow)
+                _trustedGrid.Rows[rowIndex].Selected = true;
 
-            if (d.DeviceId == previouslySelectedId) _trustedGrid.Rows[rowIndex].Selected = true;
+            // A user-visible ROW (not a column value) for remote access, per explicit
+            // request - "so we know exactly which device[s] are connect[ed] [via] remote
+            // pair[ing]" at a glance, rather than reading a column on the main row. Shows
+            // when this device last connected specifically over Tailscale (distinct from
+            // LastConnectedAt above, which updates for LAN reconnects too), and gets its
+            // own "currently connected" highlight when the live session is actually remote.
+            if (d.RemoteApproved)
+            {
+                _listedDevices.Add(d); // same underlying device - either row maps back to it
+                int remoteRowIndex = _trustedGrid.Rows.Add(
+                    RemoteRowNamePrefix + "Remote access (Tailscale)",
+                    "-",
+                    d.LastRemoteConnectedAt?.ToString(DateFormat) ?? "Never",
+                    "-", "-", "-");
+                var remoteRow = _trustedGrid.Rows[remoteRowIndex];
+                remoteRow.DefaultCellStyle.ForeColor = Color.FromArgb(140, 148, 165);
+                if (d.DeviceId == _connectedDeviceId && _connectedViaRemote) HighlightRow(remoteRow);
+                if (d.DeviceId == previouslySelectedId && previouslySelectedWasRemoteRow)
+                    _trustedGrid.Rows[remoteRowIndex].Selected = true;
+            }
         }
+    }
+
+    private static void HighlightRow(DataGridViewRow row)
+    {
+        row.DefaultCellStyle.BackColor = Color.FromArgb(28, 58, 48);
+        row.DefaultCellStyle.ForeColor = Color.FromArgb(150, 230, 190);
+        row.DefaultCellStyle.SelectionBackColor = Color.FromArgb(38, 74, 62);
+        row.DefaultCellStyle.SelectionForeColor = Color.FromArgb(170, 245, 210);
     }
 
     /// The device the currently selected grid row corresponds to, or null if nothing's

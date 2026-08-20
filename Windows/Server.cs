@@ -35,7 +35,7 @@ class Server
     public event Action<Packet>? PacketReceived;
     public event Action<string>? UndecodableLineReceived;
     public event Action<int, bool>? HeldInputReleased;
-    public event Action<string, string>? DeviceConnected; // (deviceId, label)
+    public event Action<string, string, bool>? DeviceConnected; // (deviceId, label, isRemote)
     public event Action? DeviceDisconnected;
     public event Action<string>? ConnectionRejected;
 
@@ -185,11 +185,12 @@ class Server
                 _connectedDeviceId = deviceId;
                 Interlocked.Increment(ref _clientCount);
                 ClientCountChanged?.Invoke(_clientCount);
-                DeviceConnected?.Invoke(deviceId, label);
+                DeviceConnected?.Invoke(deviceId, label, isRemote);
                 // Covers every successful handshake, not just a first-time pairing (Approve
                 // already logs its own "Paired" entry for that case) - an ordinary reconnect
                 // of an already-trusted device needs its LastConnectedAt/history updated too.
                 _pairing.RecordConnected(deviceId);
+                if (isRemote) _pairing.RecordRemoteConnected(deviceId);
 
                 while (!token.IsCancellationRequested)
                 {

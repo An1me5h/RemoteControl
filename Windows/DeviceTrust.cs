@@ -36,11 +36,15 @@ record DeviceHistoryEntry(DateTime At, string EventText);
 /// per device, not per remote session. Default false so an OLD trusted_devices.json (saved
 /// before this existed) doesn't retroactively grant remote access to devices that were
 /// only ever approved over the LAN.
+/// LastRemoteConnectedAt: separate from LastConnectedAt (which updates on EVERY connection,
+/// LAN or remote) - this one only updates when a connection specifically arrived over
+/// Tailscale, so DeviceWindow can show "last connected remotely" on its own synthetic row
+/// for the device instead of just a capability flag.
 record TrustedDevice(
     string DeviceId, string Model, string Build, string Name, DateTime PairedAt,
     DateTime? LastConnectedAt = null, DateTime? LastDisconnectedAt = null,
     List<DeviceHistoryEntry>? History = null, bool ViewOnly = false, int Priority = 0,
-    bool RemoteApproved = false)
+    bool RemoteApproved = false, DateTime? LastRemoteConnectedAt = null)
 {
     public List<DeviceHistoryEntry> History { get; init; } = History ?? new List<DeviceHistoryEntry>();
 }

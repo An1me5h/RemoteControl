@@ -98,10 +98,10 @@ class TrayApp : ApplicationContext
         };
 
         _server.ClientCountChanged += OnClientCountChanged;
-        _server.DeviceConnected += (deviceId, label) =>
+        _server.DeviceConnected += (deviceId, label, isRemote) =>
         {
-            _deviceWindow.ShowConnected(deviceId, label);
-            Log($"[{Now()}] Connected: {label}");
+            _deviceWindow.ShowConnected(deviceId, label, isRemote);
+            Log($"[{Now()}] Connected: {label}{(isRemote ? " (via Tailscale)" : "")}");
         };
         _server.DeviceDisconnected += () =>
         {

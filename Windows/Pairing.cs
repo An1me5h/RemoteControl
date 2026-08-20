@@ -227,6 +227,13 @@ class PairingCoordinator
     public void RecordDisconnected(string deviceId) =>
         UpdateDevice(deviceId, device => WithHistory(device, "Disconnected") with { LastDisconnectedAt = DateTime.Now });
 
+    /// Called alongside RecordConnected, but only when this specific connection arrived
+    /// over Tailscale (Server.HandleClientAsync's isRemote) - DeviceWindow uses this to
+    /// show when a device last connected remotely, distinct from LastConnectedAt which
+    /// updates on every connection regardless of path.
+    public void RecordRemoteConnected(string deviceId) =>
+        UpdateDevice(deviceId, device => WithHistory(device, "Connected remotely") with { LastRemoteConnectedAt = DateTime.Now });
+
     public void Rename(string deviceId, string newName) =>
         UpdateDevice(deviceId, device => WithHistory(device, $"Renamed from '{device.Name}' to '{newName}'") with { Name = newName });
 
