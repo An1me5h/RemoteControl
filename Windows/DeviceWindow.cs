@@ -17,6 +17,7 @@ class DeviceWindow : Form
     private readonly Action<string> _disconnectDevice;
 
     private readonly Label _statusLabel;
+    private readonly Label _tailscaleLabel;
     private readonly Button _addDeviceButton;
     private readonly Panel _pairingPanel;
     private readonly Label _pairingCodeLabel;
@@ -80,8 +81,9 @@ class DeviceWindow : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 5
+            RowCount = 6
         };
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -102,6 +104,62 @@ class DeviceWindow : Form
             MaximumSize = new Size(440, 0),
             Margin = new Padding(0, 0, 0, 12)
         };
+
+        _tailscaleLabel = new Label
+        {
+            AutoSize = true,
+            ForeColor = Color.FromArgb(140, 148, 165),
+            Font = new Font("Segoe UI", 9f),
+            Text = "Tailscale: checking...",
+            MaximumSize = new Size(440, 0),
+            Margin = new Padding(0)
+        };
+        var tailscaleRefreshButton = new Button
+        {
+            Text = "Refresh",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(6, 2, 6, 2),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(30, 34, 44),
+            ForeColor = Color.Gainsboro,
+            Margin = new Padding(8, 0, 0, 0)
+        };
+        StyleButton(tailscaleRefreshButton);
+        // Manual, not polled - Tailscale connecting/disconnecting while this window is
+        // already open has no OS event this app can subscribe to, so re-checking is on the
+        // user's own click rather than a background timer.
+        tailscaleRefreshButton.Click += (_, _) => RefreshTailscaleLabel();
+
+        var tailscaleCopyButton = new Button
+        {
+            Text = "Copy",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(6, 2, 6, 2),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(30, 34, 44),
+            ForeColor = Color.Gainsboro,
+            Margin = new Padding(4, 0, 0, 0)
+        };
+        StyleButton(tailscaleCopyButton);
+        // Re-resolves the IP at click time rather than reading _tailscaleLabel's text back -
+        // avoids parsing the label's own display string just to recover the value.
+        tailscaleCopyButton.Click += (_, _) =>
+        {
+            string? ip = TailscaleHelper.GetIPv4();
+            if (ip != null) Clipboard.SetText($"{ip}:{_port}");
+        };
+        var tailscaleRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = false,
+            Margin = new Padding(0, 0, 0, 12)
+        };
+        tailscaleRow.Controls.Add(_tailscaleLabel);
+        tailscaleRow.Controls.Add(tailscaleRefreshButton);
+        tailscaleRow.Controls.Add(tailscaleCopyButton);
 
         _addDeviceButton = new Button
         {
@@ -262,11 +320,19 @@ class DeviceWindow : Form
         listContainer.Controls.Add(_forgetButton);
 
         root.Controls.Add(_statusLabel, 0, 0);
-        root.Controls.Add(_addDeviceButton, 0, 1);
-        root.Controls.Add(_pairingPanel, 0, 2);
-        root.Controls.Add(trustedLabel, 0, 3);
-        root.Controls.Add(listContainer, 0, 4);
+        root.Controls.Add(tailscaleRow, 0, 1);
+        root.Controls.Add(_addDeviceButton, 0, 2);
+        root.Controls.Add(_pairingPanel, 0, 3);
+        root.Controls.Add(trustedLabel, 0, 4);
+        root.Controls.Add(listContainer, 0, 5);
         Controls.Add(root);
+
+        RefreshTailscaleLabel();
+        // Tailscale can connect/disconnect while this window sits hidden in the background
+        // (it's never destroyed, just Hide()/Show()n - see OnFormClosing) - re-check every
+        // time it's shown again. If Tailscale connects while the window is ALREADY open and
+        // visible, the Refresh button next to the label covers that (manual, not polled).
+        VisibleChanged += (_, _) => { if (Visible) RefreshTailscaleLabel(); };
 
         RefreshTrustedList();
         // One-time fit-to-content - exactly the "show it all fit to text at the start" the
@@ -367,6 +433,14 @@ class DeviceWindow : Form
         // it - see PairingCoordinator) - revert the label back to the generic instruction
         // now that nobody's actively mid-handshake against it.
         if (_pairing.OpenCode != null) _pairingModelLabel.Text = DefaultPairingText;
+    }
+
+    private void RefreshTailscaleLabel()
+    {
+        string? ip = TailscaleHelper.GetIPv4();
+        _tailscaleLabel.Text = ip != null
+            ? $"Tailscale: {ip}:{_port} - reachable from anywhere your tailnet reaches, not just this network"
+            : "Tailscale: not detected (install/connect Tailscale to control this PC remotely)";
     }
 
     /// Matches the `remotecontrol://pair` intent-filter MainActivity registers on the

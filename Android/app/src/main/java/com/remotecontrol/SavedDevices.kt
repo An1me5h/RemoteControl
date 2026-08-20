@@ -12,7 +12,7 @@ data class SavedDevice(val name: String, val host: String, val port: Int, val de
  *  shown next to it in the saved-devices list. "Other" covers anything not listed - a
  *  fridge, a smart display, whatever else ends up running the Windows side. */
 object DeviceTypeCatalog {
-    val types = listOf("TV", "Laptop", "Desktop / PC", "Monitor / Screen", "Raspberry Pi", "Smart Fridge", "Other")
+    val types = listOf("TV", "Laptop", "Desktop / PC", "Monitor / Screen", "Raspberry Pi", "Smart Fridge", "Tailscale / Remote", "Other")
 
     fun icon(type: String): String = when (type) {
         "TV" -> "📺"
@@ -21,6 +21,7 @@ object DeviceTypeCatalog {
         "Monitor / Screen" -> "🖼️"
         "Raspberry Pi" -> "🍓"
         "Smart Fridge" -> "🧊"
+        "Tailscale / Remote" -> "🌐"
         else -> "📦"
     }
 }
