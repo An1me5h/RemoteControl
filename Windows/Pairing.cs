@@ -221,18 +221,21 @@ class PairingCoordinator
     /// Called on EVERY successful handshake (Server.HandleClientAsync), whether this
     /// connection just got approved for the first time (Approve() above already logged
     /// "Paired" for that case) or it's an ordinary reconnect of an already-trusted device.
-    public void RecordConnected(string deviceId) =>
-        UpdateDevice(deviceId, device => WithHistory(device, "Connected") with { LastConnectedAt = DateTime.Now });
+    /// isRemote (Server.HandleClientAsync's Tailscale-address check) picks which single
+    /// history line gets logged - "Connected" or "Connected (remote - Tailscale)" - rather
+    /// than logging two separate entries per remote connection, which read as a confusing
+    /// duplicate in DeviceHistoryDialog's list. LastRemoteConnectedAt only updates for the
+    /// remote case, staying distinct from LastConnectedAt which updates either way.
+    public void RecordConnected(string deviceId, bool isRemote) =>
+        UpdateDevice(deviceId, device =>
+        {
+            var updated = WithHistory(device, isRemote ? "Connected (remote - Tailscale)" : "Connected")
+                with { LastConnectedAt = DateTime.Now };
+            return isRemote ? updated with { LastRemoteConnectedAt = DateTime.Now } : updated;
+        });
 
     public void RecordDisconnected(string deviceId) =>
         UpdateDevice(deviceId, device => WithHistory(device, "Disconnected") with { LastDisconnectedAt = DateTime.Now });
-
-    /// Called alongside RecordConnected, but only when this specific connection arrived
-    /// over Tailscale (Server.HandleClientAsync's isRemote) - DeviceWindow uses this to
-    /// show when a device last connected remotely, distinct from LastConnectedAt which
-    /// updates on every connection regardless of path.
-    public void RecordRemoteConnected(string deviceId) =>
-        UpdateDevice(deviceId, device => WithHistory(device, "Connected remotely") with { LastRemoteConnectedAt = DateTime.Now });
 
     public void Rename(string deviceId, string newName) =>
         UpdateDevice(deviceId, device => WithHistory(device, $"Renamed from '{device.Name}' to '{newName}'") with { Name = newName });

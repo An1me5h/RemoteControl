@@ -189,8 +189,7 @@ class Server
                 // Covers every successful handshake, not just a first-time pairing (Approve
                 // already logs its own "Paired" entry for that case) - an ordinary reconnect
                 // of an already-trusted device needs its LastConnectedAt/history updated too.
-                _pairing.RecordConnected(deviceId);
-                if (isRemote) _pairing.RecordRemoteConnected(deviceId);
+                _pairing.RecordConnected(deviceId, isRemote);
 
                 while (!token.IsCancellationRequested)
                 {

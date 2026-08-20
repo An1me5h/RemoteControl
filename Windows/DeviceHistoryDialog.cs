@@ -19,6 +19,19 @@ class DeviceHistoryDialog : Form
         MinimumSize = new Size(320, 260);
         Padding = new Padding(16);
 
+        // The title bar already says the device name, but it renders small in the OS
+        // chrome and is easy to miss - a real heading in the body makes it unambiguous
+        // which device's history this list belongs to at a glance.
+        var heading = new Label
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            ForeColor = Color.Gainsboro,
+            Font = new Font("Segoe UI", 11f, FontStyle.Bold),
+            Text = $"{device.Name} - connection history",
+            Margin = new Padding(0, 0, 0, 8)
+        };
+
         var list = new ListBox
         {
             Dock = DockStyle.Fill,
@@ -40,7 +53,13 @@ class DeviceHistoryDialog : Form
         {
             Text = "Close",
             Dock = DockStyle.Bottom,
-            Height = 32,
+            // AutoSize + a MinimumSize floor instead of a hardcoded Height - see
+            // RenameDeviceDialog's identical fix for why (a fixed pixel height doesn't
+            // reserve enough room for this font's real glyph metrics, clipping the text).
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 32),
+            Padding = new Padding(8, 4, 8, 4),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(30, 34, 44),
             ForeColor = Color.Gainsboro,
@@ -52,11 +71,13 @@ class DeviceHistoryDialog : Form
         var container = new Panel { Dock = DockStyle.Fill };
         container.Controls.Add(list);
 
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.Controls.Add(container, 0, 0);
-        root.Controls.Add(closeButton, 0, 1);
+        root.Controls.Add(heading, 0, 0);
+        root.Controls.Add(container, 0, 1);
+        root.Controls.Add(closeButton, 0, 2);
         Controls.Add(root);
 
         AcceptButton = closeButton;

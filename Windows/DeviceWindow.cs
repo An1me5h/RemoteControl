@@ -48,6 +48,13 @@ class DeviceWindow : Form
     // cycle - only the very first real layout should decide the columns' widths.
     private bool _columnsAutoFitted;
 
+    // Exact pixel height OnPairingOpened added to the window to fit the newly-revealed
+    // pairing panel - OnPairingClosed subtracts precisely this back out (not a recomputed
+    // value) so repeated open/close cycles can't drift the window size even if the panel's
+    // own content height varies between the two (e.g. LAN vs remote instruction text wraps
+    // to a different number of lines). 0 while pairing is closed.
+    private int _pairingPanelHeightAdded;
+
     private const string DateFormat = "yyyy-MM-dd HH:mm";
 
     public DeviceWindow(PairingCoordinator pairing, string localAddress, int port,
@@ -468,6 +475,18 @@ class DeviceWindow : Form
         _addDeviceButton.Enabled = !_pairingIsRemote;
         _addRemoteDeviceButton.Text = _pairingIsRemote ? "Cancel Pairing" : "+ Add Remote Device (Tailscale)";
         _addRemoteDeviceButton.Enabled = _pairingIsRemote;
+
+        // Grow the window to fit the newly-revealed panel instead of letting it squeeze
+        // the trusted-devices grid down with no way back except a manual resize (reported
+        // bug) - the grid's TableLayoutPanel row is Percent(100), so it silently absorbs
+        // whatever height the AutoSize rows above it need; this makes the WINDOW grow
+        // instead. PerformLayout() first forces _pairingPanel's AutoSize height to reflect
+        // the content just set, now that it's actually Visible - reading .Height before
+        // that would see stale (often zero) layout from while it was hidden.
+        PerformLayout();
+        _pairingPanelHeightAdded = _pairingPanel.Height + _pairingPanel.Margin.Vertical;
+        Height += _pairingPanelHeightAdded;
+
         Show();
         WindowState = FormWindowState.Normal;
         BringToFront();
@@ -481,6 +500,11 @@ class DeviceWindow : Form
         _addDeviceButton.Enabled = true;
         _addRemoteDeviceButton.Text = "+ Add Remote Device (Tailscale)";
         _addRemoteDeviceButton.Enabled = true;
+
+        // Shrink back by the EXACT amount OnPairingOpened added, not a recomputed value -
+        // see _pairingPanelHeightAdded's own doc comment for why.
+        Height -= _pairingPanelHeightAdded;
+        _pairingPanelHeightAdded = 0;
     }
 
     /// The pairing panel's instruction text, aware of which button opened it - this is

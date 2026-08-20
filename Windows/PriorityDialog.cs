@@ -91,8 +91,12 @@ class PriorityDialog : Form
         var saveButton = new Button
         {
             Text = "Save",
-            Width = 90,
-            Height = 30,
+            // AutoSize + a MinimumSize floor instead of a hardcoded Width/Height - see
+            // RenameDeviceDialog's identical fix for why (fixed 90x30 clipped the text).
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(90, 32),
+            Padding = new Padding(8, 4, 8, 4),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(30, 34, 44),
             ForeColor = Color.Gainsboro
@@ -103,8 +107,10 @@ class PriorityDialog : Form
         var cancelButton = new Button
         {
             Text = "Cancel",
-            Width = 90,
-            Height = 30,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(90, 32),
+            Padding = new Padding(8, 4, 8, 4),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(30, 34, 44),
             ForeColor = Color.Gainsboro,

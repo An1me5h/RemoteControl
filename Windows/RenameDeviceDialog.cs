@@ -59,8 +59,15 @@ class RenameDeviceDialog : Form
         var saveButton = new Button
         {
             Text = "Save",
-            Width = 90,
-            Height = 30,
+            // AutoSize + a MinimumSize floor instead of a hardcoded Width/Height - the
+            // fixed 90x30 didn't leave enough room for this font's real glyph metrics,
+            // clipping the text top/bottom (reported, confirmed on screen). Same fix
+            // CloseConfirmDialog's buttons already got; this dialog and PriorityDialog's
+            // had been missed.
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(90, 32),
+            Padding = new Padding(8, 4, 8, 4),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(30, 34, 44),
             ForeColor = Color.Gainsboro
@@ -71,8 +78,10 @@ class RenameDeviceDialog : Form
         var cancelButton = new Button
         {
             Text = "Cancel",
-            Width = 90,
-            Height = 30,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(90, 32),
+            Padding = new Padding(8, 4, 8, 4),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(30, 34, 44),
             ForeColor = Color.Gainsboro,
