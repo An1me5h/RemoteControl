@@ -15,29 +15,40 @@ import android.widget.ScrollView
 
 /**
  * Self-contained on-screen "remote keyboard" for driving a Windows PC - a full QWERTY
- * layout (letters, digits with shifted symbols, punctuation, F-keys, modifiers, CapsLock,
- * and an Fn-held navigation cluster) expressed entirely in Windows virtual-key codes (see
- * [VK]). Has NO dependency on this app's network protocol or any other app file - wire it
- * up by setting [onKeyDown]/[onKeyUp]/[onKeyTap]/[onCharTyped] to whatever you want done
- * with the result. Meant to be portable: this file, `view_remote_keyboard.xml`, and the
- * `key_bg`/`key_bg_active` drawables + `KeyButton`/`CharKeyButton` styles it references are
- * the only pieces a different app would need to copy over.
+ * layout (letters, digits, a collapsible punctuation/symbols section, F-keys, modifiers,
+ * and an Fn-held Home/End/PageUp/PageDown cluster) expressed entirely in Windows virtual-
+ * key codes (see [VK]). Has NO dependency on this app's network protocol or any other app
+ * file - wire it up by setting [onKeyDown]/[onKeyUp]/[onKeyTap]/[onCombo]/[onCharTyped] to
+ * whatever you want done with the result. Meant to be portable: this file, `view_remote_
+ * keyboard.xml`, and the `key_bg`/`key_bg_active` drawables + `KeyButton`/`CharKeyButton`
+ * styles it references are the only pieces a different app would need to copy over.
  *
- * Gestures, uniform across every key:
- *   quick tap              -> [onKeyTap] for a non-character key, or [onCharTyped] for a
- *                              plain character key with nothing currently held
- *   hold [holdThresholdMs] -> [onKeyDown], stays "held" (even after lifting) until a LATER
- *                              tap on the same key releases it -> [onKeyUp]. This is also
- *                              how modifiers combo with another key: hold Ctrl, tap C.
- *   CapsLock               -> a real toggle (not hold-mode) - flips on/off on each tap,
- *                              highlights while on, and re-labels every letter key
- *                              uppercase/lowercase to match. [onCharTyped] delivers the
- *                              already-case-corrected letter, since character delivery is
- *                              typically layout-independent unicode injection on the
- *                              receiving end, which bypasses whatever real keyboard state
- *                              (including CapsLock) it's actually in.
- *   Fn held down           -> reveals the navigation cluster (arrows, Home/End, PageUp/
- *                              PageDown) for as long as it's held, same as a real keyboard.
+ * A deliberate design boundary, not an oversight: the PHONE's own idea of "which modifiers
+ * are active" and the PC's REAL, physical keyboard state are kept completely separate.
+ * Tapping Ctrl/Alt/Shift/Win only ever flips a LOCAL flag here (see [activeModifiers]) and
+ * highlights the button - nothing is sent to the PC just from that tap. The PC's actual
+ * keyboard is only ever touched the instant a non-modifier key is tapped while a modifier
+ * is active, and even then as ONE atomic [onCombo] (all keys down then up together, never
+ * left "held" between calls) - never a real, extended VKDOWN that would leave the PC's
+ * physical Ctrl/Shift/etc. genuinely pressed for as long as the phone happens to show it
+ * highlighted. This matters because the earlier design (a real held VKDOWN for the whole
+ * time a modifier looked "active") meant the PC's own physical keyboard was actually
+ * affected for that entire window - not just misleading, but a real risk if anything else
+ * was typed at the PC directly during it.
+ *
+ * Gestures:
+ *   quick tap on a character/action key -> [onKeyTap]/[onCharTyped] with nothing active,
+ *                                           or [onCombo] with the active modifiers folded in
+ *   hold [holdThresholdMs] on a
+ *     character/action key             -> [onKeyDown], stays "held" (a real, intentional
+ *                                           sustained press - e.g. holding an arrow key to
+ *                                           auto-repeat) until a later tap -> [onKeyUp].
+ *                                           Deliberately NOT extended to modifiers - see above.
+ *   tap on Ctrl/Alt/Shift/Win           -> toggles it in/out of [activeModifiers] - local
+ *                                           only, sends nothing by itself
+ *   Fn held down                        -> reveals Home/End/PageUp/PageDown for as long as
+ *                                           it's held, same as a real keyboard. Arrows are
+ *                                           NOT behind Fn - they're always visible.
  */
 class RemoteKeyboardView @JvmOverloads constructor(
     context: Context,
@@ -53,7 +64,6 @@ class RemoteKeyboardView @JvmOverloads constructor(
         const val SHIFT = 0x10
         const val CONTROL = 0x11
         const val ALT = 0x12
-        const val CAPS_LOCK = 0x14
         const val ESC = 0x1B
         const val SPACE = 0x20
         const val PAGE_UP = 0x21
@@ -91,8 +101,11 @@ class RemoteKeyboardView @JvmOverloads constructor(
         const val OEM_6 = 0xDD        // ] }
         const val OEM_7 = 0xDE        // ' "
 
+        private val MODIFIERS = setOf(SHIFT, CONTROL, ALT, LWIN)
+        fun isModifier(vk: Int) = vk in MODIFIERS
+
         /** VK for 'A'-'Z'/'0'-'9' matches ASCII; punctuation maps to its own OEM code
-         *  (standard US layout). Used both for modifier combos (hold Ctrl, tap C) and
+         *  (standard US layout). Used both for modifier combos (activate Ctrl, tap C) and
          *  hold-mode itself, which only makes sense for a key with a real VK - holding a
          *  synthetic unicode character down has no OS-level meaning to hold. Returns null
          *  for anything not on a standard US keyboard. */
@@ -116,17 +129,19 @@ class RemoteKeyboardView @JvmOverloads constructor(
         }
     }
 
-    /** Engaged hold or a modifier going down - the host should press [vk] and keep it down
-     *  until the matching [onKeyUp]. */
+    /** Engaged hold on a non-modifier key - see the class doc comment for why modifiers
+     *  never go through this. The host should press [vk] and keep it down until the
+     *  matching [onKeyUp]. */
     var onKeyDown: ((vk: Int) -> Unit)? = null
     /** Matching release for a previous [onKeyDown]. */
     var onKeyUp: ((vk: Int) -> Unit)? = null
-    /** A single press+release: either a non-character action key (Esc, Enter, F-keys, ...),
-     *  or a character key tapped while a modifier is currently held - the host needs the
-     *  real VK there, not a layout-independent character, for the combo to mean anything. */
+    /** A single press+release of one key, nothing active. */
     var onKeyTap: ((vk: Int) -> Unit)? = null
-    /** A plain character typed with nothing held - not a VK combo, just layout-independent
-     *  text entry. Already case-corrected for the CapsLock toggle. */
+    /** One or more keys pressed and released together ATOMICALLY (active modifiers + the
+     *  key just tapped) - never a separately-held modifier plus a later tap. */
+    var onCombo: ((keys: List<Int>) -> Unit)? = null
+    /** A plain character typed with no modifier active - not a VK combo, just layout-
+     *  independent text entry. */
     var onCharTyped: ((ch: Char) -> Unit)? = null
     /** Fired on every change while a custom-key recording is active (see [startRecording])
      *  with the keys held so far, in order. */
@@ -136,30 +151,32 @@ class RemoteKeyboardView @JvmOverloads constructor(
 
     private val heldKeys = mutableMapOf<Int, Button>()
     private val holdHandler = Handler(Looper.getMainLooper())
-    private var isCapsLockOn = false
     private val letterButtons = mutableListOf<Button>()
+
+    /** Locally-tracked "active" modifiers - see the class doc comment. Never mirrors a
+     *  real, extended PC-side key-down; only ever folded into the next [onCombo]. */
+    private val activeModifiers = mutableSetOf<Int>()
+    private val modifierButtons = mutableMapOf<Int, Button>()
 
     private var isRecording = false
     private val recordingKeys = mutableListOf<Int>()
     private val recordingButtons = mutableMapOf<Int, Button>()
 
     private val fnNavContainer: LinearLayout
-    private val keyCapsLock: Button
+    private val symbolsContent: LinearLayout
+    private val btnToggleSymbols: Button
 
     init {
         LayoutInflater.from(context).inflate(R.layout.view_remote_keyboard, this, true)
 
         fnNavContainer = findViewById(R.id.fnNavContainer)
-        keyCapsLock = findViewById(R.id.keyCapsLock)
+        symbolsContent = findViewById(R.id.symbolsContent)
+        btnToggleSymbols = findViewById(R.id.btnToggleSymbols)
         val keyFn = findViewById<Button>(R.id.keyFn)
 
         val actionKeys = mapOf(
             R.id.keyEsc to VK.ESC,
             R.id.keyTab to VK.TAB,
-            R.id.keyCtrl to VK.CONTROL,
-            R.id.keyAlt to VK.ALT,
-            R.id.keyShift to VK.SHIFT,
-            R.id.keyWin to VK.LWIN,
             R.id.keyBack to VK.BACK,
             R.id.keyEnter to VK.ENTER,
             R.id.keySpace to VK.SPACE,
@@ -179,24 +196,21 @@ class RemoteKeyboardView @JvmOverloads constructor(
             R.id.keyF10 to VK.F10, R.id.keyF11 to VK.F11, R.id.keyF12 to VK.F12
         )
         for ((id, vk) in actionKeys) {
-            wireHoldable(findViewById(id), vk) { onKeyTap?.invoke(vk) }
+            wireHoldable(findViewById(id), vk) { dispatchTap(vk) }
         }
 
-        // CapsLock is a real toggle, not hold-mode - holding it down doesn't mean anything
-        // on a real keyboard either.
-        keyCapsLock.setOnClickListener {
-            isCapsLockOn = !isCapsLockOn
-            setActive(keyCapsLock, isCapsLockOn)
-            for (button in letterButtons) {
-                val tag = button.tag as String
-                button.text = if (isCapsLockOn) tag.uppercase() else tag
-            }
-            onKeyTap?.invoke(VK.CAPS_LOCK)
+        val modifierKeys = mapOf(
+            R.id.keyCtrl to VK.CONTROL,
+            R.id.keyAlt to VK.ALT,
+            R.id.keyShift to VK.SHIFT,
+            R.id.keyWin to VK.LWIN
+        )
+        for ((id, vk) in modifierKeys) {
+            wireModifier(findViewById(id), vk)
         }
 
-        // Not hold-mode either (attachHoldable's engage-after-threshold doesn't apply) -
-        // Fn reveals the nav cluster for exactly as long as it's physically held, same as
-        // a real keyboard's Fn key.
+        // Not hold-mode either - Fn reveals the nav cluster for exactly as long as it's
+        // physically held, same as a real keyboard's Fn key, not a toggle.
         keyFn.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> fnNavContainer.visibility = View.VISIBLE
@@ -205,31 +219,45 @@ class RemoteKeyboardView @JvmOverloads constructor(
             true
         }
 
+        btnToggleSymbols.setOnClickListener {
+            val expand = symbolsContent.visibility != View.VISIBLE
+            symbolsContent.visibility = if (expand) View.VISIBLE else View.GONE
+            btnToggleSymbols.text = if (expand) "▾ Symbols" else "▸ Symbols"
+        }
+
         assignCharKeys(this)
     }
 
-    /** Releases every currently held key (real VKUP for each, since the receiving end has
-     *  no other way to find out) - call this from the host's onPause so backgrounding the
-     *  app can never leave something stuck down remotely. */
+    /** Releases every currently held (non-modifier) key and clears active modifiers - call
+     *  from the host's onPause so backgrounding the app can never leave a real, sustained
+     *  key-down stuck on the PC. Active modifiers never touched the PC in the first place
+     *  (see the class doc comment), so clearing them is purely a visual reset. */
     fun releaseAllHeld() {
         for ((vk, button) in heldKeys) {
             onKeyUp?.invoke(vk)
             setActive(button, false)
         }
         heldKeys.clear()
+        clearActiveModifiers()
     }
 
     /** Same bookkeeping as [releaseAllHeld] but sends nothing - for when there's no live
-     *  connection to send a release over in the first place (e.g. the connection already
-     *  dropped), only the button highlights need resetting. */
+     *  connection to send a release over in the first place. */
     fun resetHeldVisuals() {
         for (button in heldKeys.values) setActive(button, false)
         heldKeys.clear()
+        clearActiveModifiers()
     }
 
-    /** Starts capturing a custom-key combo: the normal hold gesture on any key adds it to
-     *  the combo (via [onRecordingChanged]) instead of firing [onKeyDown]/[onKeyTap]/
-     *  [onCharTyped] - nothing reaches the host's real callbacks while recording. */
+    private fun clearActiveModifiers() {
+        for (vk in activeModifiers) modifierButtons[vk]?.let { setActive(it, false) }
+        activeModifiers.clear()
+        relabelLetters()
+    }
+
+    /** Starts capturing a custom-key combo: the normal hold gesture on any key (including
+     *  modifiers, via [wireModifier]'s own recording branch) adds it to the combo instead
+     *  of its usual live effect. */
     fun startRecording() {
         isRecording = true
         recordingKeys.clear()
@@ -258,9 +286,92 @@ class RemoteKeyboardView @JvmOverloads constructor(
         button.setTextColor(context.getColor(if (active) R.color.bg else R.color.text_primary))
     }
 
+    /** A non-character action key was tapped (not held) - fold in whatever modifiers are
+     *  currently active as one atomic combo, or send a plain tap if none are. */
+    private fun dispatchTap(vk: Int) {
+        if (activeModifiers.isEmpty()) {
+            onKeyTap?.invoke(vk)
+        } else {
+            onCombo?.invoke(activeModifiers.toList() + vk)
+        }
+    }
+
+    /** Ctrl/Alt/Shift/Win: a plain tap toggles LOCAL "active" state only - see the class
+     *  doc comment for why this never sends anything to the PC by itself. During custom-key
+     *  RECORDING, though, these still need the same hold-to-capture gesture every other key
+     *  uses (a combo needs to know exactly which modifiers to bake in), which is why this
+     *  keeps its own small hold-timer rather than reusing [wireHoldable] wholesale - the
+     *  live (non-recording) tap behavior is fundamentally different from every other key's. */
+    private fun wireModifier(button: Button, vk: Int) {
+        modifierButtons[vk] = button
+        var holdEngagedThisPress = false
+        val holdRunnable = Runnable {
+            if (!isRecording) return@Runnable
+            holdEngagedThisPress = true
+            button.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            if (vk !in recordingKeys) {
+                recordingKeys.add(vk)
+                recordingButtons[vk] = button
+                setActive(button, true)
+                onRecordingChanged?.invoke(recordingKeys.toList())
+            }
+        }
+
+        button.setOnTouchListener { _, event ->
+            if (isRecording) {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        if (vk !in recordingKeys) {
+                            holdEngagedThisPress = false
+                            holdHandler.postDelayed(holdRunnable, holdThresholdMs)
+                        }
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> holdHandler.removeCallbacks(holdRunnable)
+                }
+            }
+            false
+        }
+
+        button.setOnClickListener {
+            if (isRecording) {
+                if (holdEngagedThisPress) {
+                    holdEngagedThisPress = false
+                } else if (vk in recordingKeys) {
+                    recordingKeys.remove(vk)
+                    recordingButtons.remove(vk)
+                    setActive(button, false)
+                    onRecordingChanged?.invoke(recordingKeys.toList())
+                }
+                return@setOnClickListener
+            }
+            if (vk in activeModifiers) {
+                activeModifiers.remove(vk)
+                setActive(button, false)
+            } else {
+                activeModifiers.add(vk)
+                setActive(button, true)
+            }
+            if (vk == VK.SHIFT) relabelLetters()
+        }
+    }
+
+    /** Letter keys show uppercase while Shift is active - purely a visual cue (the char
+     *  captured in each button's own closure at wiring time stays lowercase forever; the
+     *  actual case sent is decided by [sendChar]/[dispatchTap] at send time, not by
+     *  whatever the button currently displays). */
+    private fun relabelLetters() {
+        val upper = VK.SHIFT in activeModifiers
+        for (button in letterButtons) {
+            val tag = button.tag as String
+            button.text = if (upper) tag.uppercase() else tag
+        }
+    }
+
     /** Wires [button] so a quick tap (release before [holdThresholdMs]) fires [onQuickTap],
      *  while holding it down instead engages hold mode: sends [vk] down and leaves it held -
-     *  even after the finger lifts - until a later tap on the same button releases it.
+     *  even after the finger lifts - until a later tap on the same button releases it. Only
+     *  used for non-modifier keys - see the class doc comment for why modifiers ([wireModifier])
+     *  deliberately don't get this treatment live, only while recording.
      *
      *  The touch listener never consumes events (always returns false), so the normal click
      *  listener still fires on release regardless of how long the touch lasted -
@@ -330,11 +441,7 @@ class RemoteKeyboardView @JvmOverloads constructor(
 
     /** Reads the single char each key carries in android:tag and wires it - hold-capable
      *  via [wireHoldable] for anything with a VK mapping (letters, digits, all the
-     *  punctuation [VK.forChar] knows), plain-tap-only for anything that somehow doesn't
-     *  (there's nothing like that in the shipped layout right now, but a host could add a
-     *  key `VK.forChar` doesn't cover). If a modifier is currently held, letters/digits/
-     *  punctuation go through a real VK tap so the combo (e.g. Ctrl+S) actually reaches the
-     *  OS; everything else falls back to a plain unicode character. */
+     *  punctuation [VK.forChar] knows), plain-tap-only for anything that somehow doesn't. */
     private fun assignCharKeys(root: ViewGroup) {
         for (i in 0 until root.childCount) {
             val child = root.getChildAt(i)
@@ -363,18 +470,16 @@ class RemoteKeyboardView @JvmOverloads constructor(
         if (isRecording) return // wireHoldable's hold path already handles recording for
                                  // keys with a VK; a character with no VK just has nothing
                                  // meaningful to record, so a plain tap here is a no-op.
-        val anyModifierHeld = VK.CONTROL in heldKeys || VK.ALT in heldKeys ||
-            VK.SHIFT in heldKeys || VK.LWIN in heldKeys
-        val vk = if (anyModifierHeld) VK.forChar(ch) else null
-        if (vk != null) {
-            onKeyTap?.invoke(vk)
-        } else {
-            // Unicode injection on the receiving end typically bypasses its real keyboard
-            // state entirely, including whatever CapsLock state it's actually in - so this
-            // view's OWN isCapsLockOn decides the case sent, not a hope that the receiving
-            // end's real state happens to match what was last toggled.
-            val effective = if (isCapsLockOn && ch.isLetter()) ch.uppercaseChar() else ch
-            onCharTyped?.invoke(effective)
+        if (activeModifiers.isNotEmpty()) {
+            val vk = VK.forChar(ch)
+            if (vk != null) {
+                // Includes Shift+letter for a capital - one atomic combo, so the PC's own
+                // OS-level key translation produces the correct uppercase character exactly
+                // like a physical keyboard would, with nothing left held afterward.
+                onCombo?.invoke(activeModifiers.toList() + vk)
+                return
+            }
         }
+        onCharTyped?.invoke(ch)
     }
 }

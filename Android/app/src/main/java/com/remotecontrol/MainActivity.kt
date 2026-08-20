@@ -73,6 +73,8 @@ class MainActivity : AppCompatActivity() {
         if (uris.isNotEmpty()) stagePendingImages(uris)
     }
     private lateinit var customKeysContainer: LinearLayout
+    private lateinit var btnToggleCustomKeys: Button
+    private lateinit var customKeysContent: LinearLayout
     private lateinit var btnAddCustomKey: Button
     private lateinit var screenPreviewFrame: FrameLayout
     private lateinit var recordingInstructionBar: TextView
@@ -210,6 +212,8 @@ class MainActivity : AppCompatActivity() {
         btnClearImage = findViewById(R.id.btnClearImage)
         btnPickImage = findViewById(R.id.btnPickImage)
         customKeysContainer = findViewById(R.id.customKeysContainer)
+        btnToggleCustomKeys = findViewById(R.id.btnToggleCustomKeys)
+        customKeysContent = findViewById(R.id.customKeysContent)
         btnAddCustomKey = findViewById(R.id.btnAddCustomKey)
         screenPreviewFrame = findViewById(R.id.screenPreviewFrame)
         recordingInstructionBar = findViewById(R.id.recordingInstructionBar)
@@ -455,6 +459,7 @@ class MainActivity : AppCompatActivity() {
         remoteKeyboard.onKeyDown = { vk -> conn.send(Packet.VkDown(vk)) }
         remoteKeyboard.onKeyUp = { vk -> conn.send(Packet.VkUp(vk)) }
         remoteKeyboard.onKeyTap = { vk -> conn.send(Packet.VkTap(vk)) }
+        remoteKeyboard.onCombo = { keys -> conn.send(Packet.Combo(keys)) }
         remoteKeyboard.onCharTyped = { ch -> conn.send(Packet.Key(ch)) }
     }
 
@@ -473,6 +478,13 @@ class MainActivity : AppCompatActivity() {
         btnAddCustomKey.setOnClickListener { startRecordingCustomKey() }
         btnCancelRecording.setOnClickListener { cancelRecordingCustomKey() }
         btnSaveRecording.setOnClickListener { finishRecordingCustomKey() }
+        // Collapsed by default (see the layout comment) - the keyboard itself is already
+        // tall enough that an always-expanded list here pushed it out of view.
+        btnToggleCustomKeys.setOnClickListener {
+            val expand = customKeysContent.visibility != View.VISIBLE
+            customKeysContent.visibility = if (expand) View.VISIBLE else View.GONE
+            btnToggleCustomKeys.text = (if (expand) "▾" else "▸") + " Custom Keys (${customKeys.size})"
+        }
     }
 
     /** Rebuilds customKeysContainer from [customKeys], two buttons per row. Tap sends the
@@ -507,6 +519,11 @@ class MainActivity : AppCompatActivity() {
             }
             row?.addView(button)
         }
+        // Keeps the collapsed header's count accurate after an add/delete without needing
+        // to toggle the section open and closed - the arrow glyph reflects current state,
+        // read back from the content's own visibility rather than tracked separately.
+        val expanded = customKeysContent.visibility == View.VISIBLE
+        btnToggleCustomKeys.text = (if (expanded) "▾" else "▸") + " Custom Keys (${customKeys.size})"
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -593,7 +610,6 @@ class MainActivity : AppCompatActivity() {
         RemoteKeyboardView.VK.ALT -> "Alt"
         RemoteKeyboardView.VK.SHIFT -> "Shift"
         RemoteKeyboardView.VK.LWIN -> "Win"
-        RemoteKeyboardView.VK.CAPS_LOCK -> "Caps"
         RemoteKeyboardView.VK.ESC -> "Esc"
         RemoteKeyboardView.VK.TAB -> "Tab"
         RemoteKeyboardView.VK.ENTER -> "Enter"

@@ -195,7 +195,11 @@
                         android:layout_height="0dp"
                         android:layout_weight="1" />
 
-                    <!-- custom keys: user-defined combos, e.g. Ctrl+T -->
+                    <!-- custom keys: user-defined combos, e.g. Ctrl+T. Collapsed by
+                         default (MainActivity.setupCustomKeys) - with the keyboard itself
+                         already tall (modifiers/F-keys/digits/letters/nav/space rows), an
+                         always-expanded list here was pushing the actual keyboard out of
+                         view. -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -203,23 +207,33 @@
                         android:paddingHorizontal="6dp"
                         android:paddingBottom="6dp">
 
-                        <TextView
-                            style="@style/ConfigLabel"
-                            android:layout_marginTop="8dp"
-                            android:text="Custom Keys" />
-
-                        <LinearLayout
-                            android:id="@+id/customKeysContainer"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="vertical" />
-
                         <Button
-                            android:id="@+id/btnAddCustomKey"
+                            android:id="@+id/btnToggleCustomKeys"
                             style="@style/KeyButton"
                             android:layout_width="match_parent"
-                            android:layout_marginTop="4dp"
-                            android:text="+ Custom Key" />
+                            android:layout_marginTop="8dp"
+                            android:text="▸ Custom Keys" />
+
+                        <LinearLayout
+                            android:id="@+id/customKeysContent"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <LinearLayout
+                                android:id="@+id/customKeysContainer"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical" />
+
+                            <Button
+                                android:id="@+id/btnAddCustomKey"
+                                style="@style/KeyButton"
+                                android:layout_width="match_parent"
+                                android:layout_marginTop="4dp"
+                                android:text="+ Custom Key" />
+                        </LinearLayout>
                     </LinearLayout>
                 </LinearLayout>
 

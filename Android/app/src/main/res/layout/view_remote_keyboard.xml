@@ -8,7 +8,10 @@
     android:orientation="vertical"
     android:padding="6dp">
 
-    <!-- modifiers + Fn -->
+    <!-- modifiers + Fn. Ctrl/Alt/Shift/Win are LOCAL sticky toggles only (see
+         RemoteKeyboardView.wireModifier) - tapping one never sends anything to the PC by
+         itself; the PC's real keyboard is only ever touched atomically, in one Combo call,
+         at the moment a non-modifier key is actually tapped. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -52,28 +55,15 @@
         <Button android:id="@+id/keyF12" style="@style/KeyButton" android:text="F12" />
     </LinearLayout>
 
-    <!-- CapsLock is a real toggle (own click handler, not attachHoldable) - PrtSc/Del are
-         plain taps like any other action key. -->
+    <!-- digits - stay in the main, always-visible keyboard (unlike punctuation below,
+         which moved into the collapsible symbols section) since they're common enough in
+         normal use. Shifted symbols (!@#$%^&*()) reachable by activating Shift first, same
+         as any other key - see the modifiers note above. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal">
 
-        <Button android:id="@+id/keyCapsLock" style="@style/KeyButton" android:text="Caps" />
-        <Button android:id="@+id/keyPrintScreen" style="@style/KeyButton" android:text="PrtSc" />
-        <Button android:id="@+id/keyDelete" style="@style/KeyButton" android:text="Del" />
-    </LinearLayout>
-
-    <!-- number row: backtick + digits + minus/equals, each also reachable shifted
-         (~ ! @ # $ % ^ &amp; * ( ) _ +) by holding Shift first - VK.forChar maps the base
-         char, and a real VkTap while Shift is genuinely held lets the receiving OS do the
-         shift translation itself, same as a physical keyboard. -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <Button style="@style/CharKeyButton" android:tag="`" android:text="`" />
         <Button style="@style/CharKeyButton" android:tag="1" android:text="1" />
         <Button style="@style/CharKeyButton" android:tag="2" android:text="2" />
         <Button style="@style/CharKeyButton" android:tag="3" android:text="3" />
@@ -84,11 +74,10 @@
         <Button style="@style/CharKeyButton" android:tag="8" android:text="8" />
         <Button style="@style/CharKeyButton" android:tag="9" android:text="9" />
         <Button style="@style/CharKeyButton" android:tag="0" android:text="0" />
-        <Button style="@style/CharKeyButton" android:tag="-" android:text="-" />
-        <Button style="@style/CharKeyButton" android:tag="=" android:text="=" />
     </LinearLayout>
 
-    <!-- qwertyuiop + brackets + backslash -->
+    <!-- qwertyuiop - back to its original 10 keys (brackets/backslash moved to the
+         collapsible symbols section below), so these buttons are wider/easier to hit. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -104,12 +93,9 @@
         <Button style="@style/CharKeyButton" android:tag="i" android:text="i" />
         <Button style="@style/CharKeyButton" android:tag="o" android:text="o" />
         <Button style="@style/CharKeyButton" android:tag="p" android:text="p" />
-        <Button style="@style/CharKeyButton" android:tag="[" android:text="[" />
-        <Button style="@style/CharKeyButton" android:tag="]" android:text="]" />
-        <Button style="@style/CharKeyButton" android:tag="\\" android:text="\" />
     </LinearLayout>
 
-    <!-- asdfghjkl + semicolon/quote -->
+    <!-- asdfghjkl - semicolon/quote moved to the symbols section. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -124,11 +110,10 @@
         <Button style="@style/CharKeyButton" android:tag="j" android:text="j" />
         <Button style="@style/CharKeyButton" android:tag="k" android:text="k" />
         <Button style="@style/CharKeyButton" android:tag="l" android:text="l" />
-        <Button style="@style/CharKeyButton" android:tag=";" android:text=";" />
-        <Button style="@style/CharKeyButton" android:tag="'" android:text="'" />
     </LinearLayout>
 
-    <!-- zxcvbnm + comma/period/slash -->
+    <!-- zxcvbnm + comma/period - kept here (common in normal typing), unlike slash which
+         moved to the symbols section. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -143,14 +128,19 @@
         <Button style="@style/CharKeyButton" android:tag="m" android:text="m" />
         <Button style="@style/CharKeyButton" android:tag="," android:text="," />
         <Button style="@style/CharKeyButton" android:tag="." android:text="." />
-        <Button style="@style/CharKeyButton" android:tag="/" android:text="/" />
     </LinearLayout>
 
-    <!-- Hidden until Fn is held - see keyFn's touch handling. Arrows + PageUp/PageDown +
-         Home/End collapsed behind Fn per explicit request, freeing permanent space for the
-         symbol keys above. -->
+    <!-- Collapsible - punctuation used less often in normal typing, tucked away so the
+         letter rows above aren't sharing space with it. Default collapsed. -->
+    <Button
+        android:id="@+id/btnToggleSymbols"
+        style="@style/KeyButton"
+        android:layout_width="match_parent"
+        android:layout_marginTop="4dp"
+        android:text="▸ Symbols" />
+
     <LinearLayout
-        android:id="@+id/fnNavContainer"
+        android:id="@+id/symbolsContent"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
@@ -161,10 +151,11 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal">
 
-            <Button android:id="@+id/keyHome" style="@style/KeyButton" android:text="Home" />
-            <Button android:id="@+id/keyPageUp" style="@style/KeyButton" android:text="PgUp" />
-            <Button android:id="@+id/keyPageDown" style="@style/KeyButton" android:text="PgDn" />
-            <Button android:id="@+id/keyEnd" style="@style/KeyButton" android:text="End" />
+            <Button style="@style/CharKeyButton" android:tag="`" android:text="`" />
+            <Button style="@style/CharKeyButton" android:tag="-" android:text="-" />
+            <Button style="@style/CharKeyButton" android:tag="=" android:text="=" />
+            <Button style="@style/CharKeyButton" android:tag="[" android:text="[" />
+            <Button style="@style/CharKeyButton" android:tag="]" android:text="]" />
         </LinearLayout>
 
         <LinearLayout
@@ -172,11 +163,42 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal">
 
-            <Button android:id="@+id/keyLeft" style="@style/KeyButton" android:text="←" />
-            <Button android:id="@+id/keyUp" style="@style/KeyButton" android:text="↑" />
-            <Button android:id="@+id/keyDown" style="@style/KeyButton" android:text="↓" />
-            <Button android:id="@+id/keyRight" style="@style/KeyButton" android:text="→" />
+            <Button style="@style/CharKeyButton" android:tag="\\" android:text="\" />
+            <Button style="@style/CharKeyButton" android:tag=";" android:text=";" />
+            <Button style="@style/CharKeyButton" android:tag="'" android:text="'" />
+            <Button style="@style/CharKeyButton" android:tag="/" android:text="/" />
         </LinearLayout>
+    </LinearLayout>
+
+    <!-- arrows + PrintScreen/Delete - always visible, unlike Home/End/PageUp/PageDown
+         below which need Fn held, matching a real keyboard where the arrow cluster is its
+         own permanent block. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button android:id="@+id/keyLeft" style="@style/KeyButton" android:text="←" />
+        <Button android:id="@+id/keyUp" style="@style/KeyButton" android:text="↑" />
+        <Button android:id="@+id/keyDown" style="@style/KeyButton" android:text="↓" />
+        <Button android:id="@+id/keyRight" style="@style/KeyButton" android:text="→" />
+        <Button android:id="@+id/keyPrintScreen" style="@style/KeyButton" android:text="PrtSc" />
+        <Button android:id="@+id/keyDelete" style="@style/KeyButton" android:text="Del" />
+    </LinearLayout>
+
+    <!-- Hidden until Fn is held - see keyFn's touch handling. Only Home/End/PageUp/
+         PageDown, unlike the arrows above which stay permanently visible. -->
+    <LinearLayout
+        android:id="@+id/fnNavContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <Button android:id="@+id/keyHome" style="@style/KeyButton" android:text="Home" />
+        <Button android:id="@+id/keyPageUp" style="@style/KeyButton" android:text="PgUp" />
+        <Button android:id="@+id/keyPageDown" style="@style/KeyButton" android:text="PgDn" />
+        <Button android:id="@+id/keyEnd" style="@style/KeyButton" android:text="End" />
     </LinearLayout>
 
     <!-- backspace + space + enter -->
