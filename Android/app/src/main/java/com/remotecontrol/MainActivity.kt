@@ -786,16 +786,20 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar) {}
         })
 
-        // Range 0.3s-3.0s: short enough not to feel laggy for someone who wants a snappy
+        // Range 0.2s-1.5s: short enough not to feel laggy for someone who wants a snappy
         // hold, long enough at the top end that fast typing can't accidentally trigger it.
-        val savedHoldThresholdSec = prefs.getFloat("holdThresholdSec", 2.0f)
+        // Narrower than the original 0.3s-3.0s range - 3s felt far too long in practice.
+        // coerceIn also migrates an old saved value from outside the new range (e.g. a
+        // pre-existing 2.0s pref) down to the new max instead of leaving holdThresholdMs
+        // and the slider's displayed position inconsistent with each other.
+        val savedHoldThresholdSec = prefs.getFloat("holdThresholdSec", 0.8f).coerceIn(0.2f, 1.5f)
         holdThresholdMs = (savedHoldThresholdSec * 1000).toLong()
-        holdThresholdSeek.progress = (((savedHoldThresholdSec - 0.3f) / 0.1f).toInt()).coerceIn(0, holdThresholdSeek.max)
+        holdThresholdSeek.progress = (((savedHoldThresholdSec - 0.2f) / 0.1f).toInt()).coerceIn(0, holdThresholdSeek.max)
         holdThresholdLabel.text = "Hold threshold: %.1fs".format(savedHoldThresholdSec)
 
         holdThresholdSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                val valueSec = 0.3f + progress * 0.1f
+                val valueSec = 0.2f + progress * 0.1f
                 holdThresholdMs = (valueSec * 1000).toLong()
                 holdThresholdLabel.text = "Hold threshold: %.1fs".format(valueSec)
                 prefs.edit().putFloat("holdThresholdSec", valueSec).apply()

@@ -443,6 +443,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="20dp"
                     android:backgroundTint="@color/accent"
+                    android:textColor="@color/bg"
                     android:text="Scan QR to Connect" />
 
                 <TextView
@@ -495,8 +496,8 @@
                     android:id="@+id/holdThresholdSeek"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:max="27"
-                    android:progress="17" />
+                    android:max="13"
+                    android:progress="6" />
 
                 <Button
                     android:id="@+id/btnConnect"
@@ -504,6 +505,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="20dp"
                     android:backgroundTint="@color/accent"
+                    android:textColor="@color/bg"
                     android:text="Connect" />
 
                 <TextView
