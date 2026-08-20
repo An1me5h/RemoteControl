@@ -7,6 +7,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.text.Spannable
+import android.text.SpannableString
+import android.text.style.RelativeSizeSpan
 import android.util.Base64
 import android.view.View
 import android.widget.ArrayAdapter
@@ -483,8 +486,19 @@ class MainActivity : AppCompatActivity() {
         btnToggleCustomKeys.setOnClickListener {
             val expand = customKeysContent.visibility != View.VISIBLE
             customKeysContent.visibility = if (expand) View.VISIBLE else View.GONE
-            btnToggleCustomKeys.text = (if (expand) "▾" else "▸") + " Custom Keys (${customKeys.size})"
+            btnToggleCustomKeys.text = collapsibleHeaderText(expand, "Custom Keys (${customKeys.size})")
         }
+    }
+
+    /** Builds the label for a collapsible section's toggle button: an arrow glyph, sized up
+     *  relative to the rest of the text since a plain "▸"/"▾" at normal text size reads as
+     *  barely more than a period, followed by [label]. */
+    private fun collapsibleHeaderText(expanded: Boolean, label: String): SpannableString {
+        val arrow = if (expanded) "▾" else "▸"
+        val full = "$arrow $label"
+        val spannable = SpannableString(full)
+        spannable.setSpan(RelativeSizeSpan(1.8f), 0, arrow.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return spannable
     }
 
     /** Rebuilds customKeysContainer from [customKeys], two buttons per row. Tap sends the
@@ -523,7 +537,7 @@ class MainActivity : AppCompatActivity() {
         // to toggle the section open and closed - the arrow glyph reflects current state,
         // read back from the content's own visibility rather than tracked separately.
         val expanded = customKeysContent.visibility == View.VISIBLE
-        btnToggleCustomKeys.text = (if (expanded) "▾" else "▸") + " Custom Keys (${customKeys.size})"
+        btnToggleCustomKeys.text = collapsibleHeaderText(expanded, "Custom Keys (${customKeys.size})")
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

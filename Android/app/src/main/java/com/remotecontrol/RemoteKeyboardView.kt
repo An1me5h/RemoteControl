@@ -3,6 +3,9 @@ package com.remotecontrol
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.text.Spannable
+import android.text.SpannableString
+import android.text.style.RelativeSizeSpan
 import android.util.AttributeSet
 import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
@@ -15,9 +18,10 @@ import android.widget.ScrollView
 
 /**
  * Self-contained on-screen "remote keyboard" for driving a Windows PC - a full QWERTY
- * layout (letters, digits, a collapsible punctuation/symbols section, F-keys, modifiers,
- * and an Fn-held Home/End/PageUp/PageDown cluster) expressed entirely in Windows virtual-
- * key codes (see [VK]). Has NO dependency on this app's network protocol or any other app
+ * layout (letters, digits, modifiers, an always-visible arrow/navigation cluster, and a
+ * collapsible "Symbols and Functions" section with punctuation, shifted number-row
+ * symbols, and F-keys) expressed entirely in Windows virtual-key codes (see [VK]). Has NO
+ * dependency on this app's network protocol or any other app
  * file - wire it up by setting [onKeyDown]/[onKeyUp]/[onKeyTap]/[onCombo]/[onCharTyped] to
  * whatever you want done with the result. Meant to be portable: this file, `view_remote_
  * keyboard.xml`, and the `key_bg`/`key_bg_active` drawables + `KeyButton`/`CharKeyButton`
@@ -46,9 +50,6 @@ import android.widget.ScrollView
  *                                           Deliberately NOT extended to modifiers - see above.
  *   tap on Ctrl/Alt/Shift/Win           -> toggles it in/out of [activeModifiers] - local
  *                                           only, sends nothing by itself
- *   Fn held down                        -> reveals Home/End/PageUp/PageDown for as long as
- *                                           it's held, same as a real keyboard. Arrows are
- *                                           NOT behind Fn - they're always visible.
  */
 class RemoteKeyboardView @JvmOverloads constructor(
     context: Context,
@@ -162,17 +163,14 @@ class RemoteKeyboardView @JvmOverloads constructor(
     private val recordingKeys = mutableListOf<Int>()
     private val recordingButtons = mutableMapOf<Int, Button>()
 
-    private val fnNavContainer: LinearLayout
     private val symbolsContent: LinearLayout
     private val btnToggleSymbols: Button
 
     init {
         LayoutInflater.from(context).inflate(R.layout.view_remote_keyboard, this, true)
 
-        fnNavContainer = findViewById(R.id.fnNavContainer)
         symbolsContent = findViewById(R.id.symbolsContent)
         btnToggleSymbols = findViewById(R.id.btnToggleSymbols)
-        val keyFn = findViewById<Button>(R.id.keyFn)
 
         val actionKeys = mapOf(
             R.id.keyEsc to VK.ESC,
@@ -209,20 +207,11 @@ class RemoteKeyboardView @JvmOverloads constructor(
             wireModifier(findViewById(id), vk)
         }
 
-        // Not hold-mode either - Fn reveals the nav cluster for exactly as long as it's
-        // physically held, same as a real keyboard's Fn key, not a toggle.
-        keyFn.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> fnNavContainer.visibility = View.VISIBLE
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> fnNavContainer.visibility = View.GONE
-            }
-            true
-        }
-
+        btnToggleSymbols.text = collapsibleHeaderText(expanded = false, label = "Symbols and Functions")
         btnToggleSymbols.setOnClickListener {
             val expand = symbolsContent.visibility != View.VISIBLE
             symbolsContent.visibility = if (expand) View.VISIBLE else View.GONE
-            btnToggleSymbols.text = if (expand) "▾ Symbols" else "▸ Symbols"
+            btnToggleSymbols.text = collapsibleHeaderText(expand, "Symbols and Functions")
         }
 
         assignCharKeys(this)
@@ -279,6 +268,17 @@ class RemoteKeyboardView @JvmOverloads constructor(
         val result = recordingKeys.toList()
         cancelRecording()
         return result
+    }
+
+    /** Builds the label for a collapsible section's toggle button: an arrow glyph, sized up
+     *  relative to the rest of the text since a plain "▸"/"▾" at normal text size reads as
+     *  barely more than a period, followed by [label]. */
+    private fun collapsibleHeaderText(expanded: Boolean, label: String): SpannableString {
+        val arrow = if (expanded) "▾" else "▸"
+        val full = "$arrow $label"
+        val spannable = SpannableString(full)
+        spannable.setSpan(RelativeSizeSpan(1.8f), 0, arrow.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return spannable
     }
 
     private fun setActive(button: Button, active: Boolean) {
