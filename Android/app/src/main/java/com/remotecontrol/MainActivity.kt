@@ -16,8 +16,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -79,6 +79,12 @@ class MainActivity : AppCompatActivity() {
     }
     private lateinit var customKeysContainer: LinearLayout
     private lateinit var btnAddCustomKey: Button
+    private lateinit var screenPreviewFrame: FrameLayout
+    private lateinit var recordingInstructionBar: TextView
+    private lateinit var bottomNavRow: LinearLayout
+    private lateinit var recordingButtonBar: LinearLayout
+    private lateinit var btnCancelRecording: Button
+    private lateinit var btnSaveRecording: Button
     private lateinit var savedDevicesContainer: LinearLayout
     private lateinit var btnSaveDevice: Button
     private lateinit var btnScanQr: Button
@@ -95,6 +101,13 @@ class MainActivity : AppCompatActivity() {
      *  release (e.g. on [onPause]) can also reset each button's highlighted background. */
     private val heldKeys = mutableMapOf<Int, Button>()
     private val holdHandler = Handler(Looper.getMainLooper())
+
+    /** True while the "+ Custom Key" recording flow (startRecordingCustomKey) is active -
+     *  attachHoldable checks this to redirect the hold gesture into recordingKeys instead
+     *  of sending real VKDOWN/VKUP packets to the PC. */
+    private var isRecordingCustomKey = false
+    private val recordingKeys = mutableListOf<Int>()
+    private val recordingKeyButtons = mutableMapOf<Int, Button>()
 
     /** How long a key must be held before it switches from "single tap" to "hold mode" -
      *  user-adjustable (CONFIG tab), persisted, read fresh by [attachHoldable] on every
@@ -218,6 +231,12 @@ class MainActivity : AppCompatActivity() {
         btnPickImage = findViewById(R.id.btnPickImage)
         customKeysContainer = findViewById(R.id.customKeysContainer)
         btnAddCustomKey = findViewById(R.id.btnAddCustomKey)
+        screenPreviewFrame = findViewById(R.id.screenPreviewFrame)
+        recordingInstructionBar = findViewById(R.id.recordingInstructionBar)
+        bottomNavRow = findViewById(R.id.bottomNavRow)
+        recordingButtonBar = findViewById(R.id.recordingButtonBar)
+        btnCancelRecording = findViewById(R.id.btnCancelRecording)
+        btnSaveRecording = findViewById(R.id.btnSaveRecording)
         savedDevicesContainer = findViewById(R.id.savedDevicesContainer)
         btnSaveDevice = findViewById(R.id.btnSaveDevice)
         btnScanQr = findViewById(R.id.btnScanQr)
@@ -357,8 +376,19 @@ class MainActivity : AppCompatActivity() {
         trackpadView.visibility = if (panel == CenterPanel.PAD) View.VISIBLE else View.GONE
         keyboardPanel.visibility = if (panel == CenterPanel.KEYS) View.VISIBLE else View.GONE
         textPanel.visibility = if (panel == CenterPanel.TEXT) View.VISIBLE else View.GONE
-        btnKeys.setBackgroundResource(if (panel == CenterPanel.KEYS) R.drawable.key_bg_active else R.drawable.key_bg)
-        btnText.setBackgroundResource(if (panel == CenterPanel.TEXT) R.drawable.key_bg_active else R.drawable.key_bg)
+        setKeyActive(btnKeys, panel == CenterPanel.KEYS)
+        setKeyActive(btnText, panel == CenterPanel.TEXT)
+    }
+
+    /** Swaps a button between the normal (dark bg, light text) and active (light mint bg,
+     *  dark text) look - key_bg_active's fill is the same light accent color used
+     *  throughout this app, so text_primary (near-white, the normal-state color every
+     *  button here uses) reads as low-contrast on top of it. Every "active" toggle in this
+     *  file (held keys, the KEYS/TEXT panel toggle) goes through this now instead of
+     *  swapping only the background, which is what left the text unreadable. */
+    private fun setKeyActive(button: Button, active: Boolean) {
+        button.setBackgroundResource(if (active) R.drawable.key_bg_active else R.drawable.key_bg)
+        button.setTextColor(getColor(if (active) R.color.bg else R.color.text_primary))
     }
 
     private fun setupTextPanel() {
@@ -448,7 +478,26 @@ class MainActivity : AppCompatActivity() {
             R.id.keyLeft to Packet.VK.LEFT,
             R.id.keyUp to Packet.VK.UP,
             R.id.keyDown to Packet.VK.DOWN,
-            R.id.keyRight to Packet.VK.RIGHT
+            R.id.keyRight to Packet.VK.RIGHT,
+            R.id.keyCapsLock to Packet.VK.CAPS_LOCK,
+            R.id.keyHome to Packet.VK.HOME,
+            R.id.keyEnd to Packet.VK.END,
+            R.id.keyPageUp to Packet.VK.PAGE_UP,
+            R.id.keyPageDown to Packet.VK.PAGE_DOWN,
+            R.id.keyPrintScreen to Packet.VK.PRINT_SCREEN,
+            R.id.keyDelete to Packet.VK.DELETE,
+            R.id.keyF1 to Packet.VK.F1,
+            R.id.keyF2 to Packet.VK.F2,
+            R.id.keyF3 to Packet.VK.F3,
+            R.id.keyF4 to Packet.VK.F4,
+            R.id.keyF5 to Packet.VK.F5,
+            R.id.keyF6 to Packet.VK.F6,
+            R.id.keyF7 to Packet.VK.F7,
+            R.id.keyF8 to Packet.VK.F8,
+            R.id.keyF9 to Packet.VK.F9,
+            R.id.keyF10 to Packet.VK.F10,
+            R.id.keyF11 to Packet.VK.F11,
+            R.id.keyF12 to Packet.VK.F12
         )
         for ((id, vk) in specialTaps) {
             val button = findViewById<Button>(id)
@@ -488,16 +537,28 @@ class MainActivity : AppCompatActivity() {
         var holdEngagedThisPress = false
         val holdRunnable = Runnable {
             holdEngagedThisPress = true
-            heldKeys[vk] = button
-            conn.send(Packet.VkDown(vk))
-            button.setBackgroundResource(R.drawable.key_bg_active)
             button.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            if (isRecordingCustomKey) {
+                // Recording a custom key: the same hold gesture ADDS this key to the
+                // combo instead of sending it live to the PC - nothing here ever reaches
+                // the actual connection while recording.
+                if (vk !in recordingKeys) {
+                    recordingKeys.add(vk)
+                    recordingKeyButtons[vk] = button
+                    setKeyActive(button, true)
+                    updateRecordingInstruction()
+                }
+            } else {
+                heldKeys[vk] = button
+                conn.send(Packet.VkDown(vk))
+                setKeyActive(button, true)
+            }
         }
 
         button.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    if (vk !in heldKeys) {
+                    if (vk !in heldKeys && vk !in recordingKeys) {
                         holdEngagedThisPress = false
                         holdHandler.postDelayed(holdRunnable, holdThresholdMs)
                     }
@@ -510,12 +571,29 @@ class MainActivity : AppCompatActivity() {
         }
 
         button.setOnClickListener {
+            if (isRecordingCustomKey) {
+                if (holdEngagedThisPress) {
+                    // Just engaged via the hold above - this release is that gesture's own
+                    // lift-off, not a separate tap, same reasoning as the non-recording path.
+                    holdEngagedThisPress = false
+                } else if (vk in recordingKeys) {
+                    // A plain tap on an already-recorded key removes it - lets a mistaken
+                    // hold be undone without leaving/re-entering recording mode. A tap on a
+                    // key NOT yet recorded does nothing (only a real hold adds one), so
+                    // idle taps while positioning a finger can't silently add the wrong key.
+                    recordingKeys.remove(vk)
+                    recordingKeyButtons.remove(vk)
+                    setKeyActive(button, false)
+                    updateRecordingInstruction()
+                }
+                return@setOnClickListener
+            }
             if (holdEngagedThisPress) {
                 holdEngagedThisPress = false
             } else if (vk in heldKeys) {
                 heldKeys.remove(vk)
                 conn.send(Packet.VkUp(vk))
-                button.setBackgroundResource(R.drawable.key_bg)
+                setKeyActive(button, false)
             } else {
                 onQuickTap()
             }
@@ -567,7 +645,7 @@ class MainActivity : AppCompatActivity() {
     private fun releaseAllHeldKeys() {
         for ((vk, button) in heldKeys) {
             conn.send(Packet.VkUp(vk))
-            button.setBackgroundResource(R.drawable.key_bg)
+            setKeyActive(button, false)
         }
         heldKeys.clear()
     }
@@ -576,14 +654,16 @@ class MainActivity : AppCompatActivity() {
      *  the connection itself is already gone (no socket to send a VKUP over even if we
      *  wanted to), not just the app backgrounding while the connection stays alive. */
     private fun resetHeldKeysVisual() {
-        for (button in heldKeys.values) button.setBackgroundResource(R.drawable.key_bg)
+        for (button in heldKeys.values) setKeyActive(button, false)
         heldKeys.clear()
     }
 
     private fun setupCustomKeys() {
         customKeys.addAll(CustomKeyStore.load(prefs))
         renderCustomKeys()
-        btnAddCustomKey.setOnClickListener { showAddCustomKeyDialog() }
+        btnAddCustomKey.setOnClickListener { startRecordingCustomKey() }
+        btnCancelRecording.setOnClickListener { cancelRecordingCustomKey() }
+        btnSaveRecording.setOnClickListener { finishRecordingCustomKey() }
     }
 
     /** Rebuilds customKeysContainer from [customKeys], two buttons per row. Tap sends the
@@ -634,36 +714,63 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun showAddCustomKeyDialog() {
-        val view = layoutInflater.inflate(R.layout.dialog_custom_key, null)
-        val etLabel = view.findViewById<EditText>(R.id.etCustomKeyLabel)
-        val cbCtrl = view.findViewById<CheckBox>(R.id.cbCustomCtrl)
-        val cbAlt = view.findViewById<CheckBox>(R.id.cbCustomAlt)
-        val cbShift = view.findViewById<CheckBox>(R.id.cbCustomShift)
-        val cbWin = view.findViewById<CheckBox>(R.id.cbCustomWin)
-        val spinner = view.findViewById<Spinner>(R.id.spinnerCustomKey)
-        spinner.adapter = ArrayAdapter(
-            this, android.R.layout.simple_spinner_dropdown_item, KeyCatalog.entries.map { it.first }
-        )
+    /** Replaces the old spinner-and-checkboxes dialog: hold down any key(s) in the KEYS
+     *  section directly (same long-press gesture used everywhere else in this app) to add
+     *  them to the combo, in order, then tap Save. The screen preview and bottom nav are
+     *  swapped out for an instruction bar and a Save/Cancel bar so the keyboard is the
+     *  obvious, undistracted focus while recording. */
+    private fun startRecordingCustomKey() {
+        isRecordingCustomKey = true
+        recordingKeys.clear()
+        showPanel(CenterPanel.KEYS)
+        screenPreviewFrame.visibility = View.GONE
+        bottomNavRow.visibility = View.GONE
+        recordingInstructionBar.visibility = View.VISIBLE
+        recordingButtonBar.visibility = View.VISIBLE
+        updateRecordingInstruction()
+    }
 
+    private fun cancelRecordingCustomKey() {
+        isRecordingCustomKey = false
+        for (vk in recordingKeys) recordingKeyButtons[vk]?.let { setKeyActive(it, false) }
+        recordingKeys.clear()
+        recordingKeyButtons.clear()
+        screenPreviewFrame.visibility = View.VISIBLE
+        bottomNavRow.visibility = View.VISIBLE
+        recordingInstructionBar.visibility = View.GONE
+        recordingButtonBar.visibility = View.GONE
+    }
+
+    private fun updateRecordingInstruction() {
+        recordingInstructionBar.text = if (recordingKeys.isEmpty())
+            "Hold down keys to add them to your combo"
+        else
+            "Combo: " + recordingKeys.joinToString(" + ") { vkLabel(it) } + "  -  hold more, or tap a held key to remove it"
+    }
+
+    /** Prompts for a name (defaulting to the combo's own key names, same auto-naming the
+     *  old dialog did) and saves - or, with nothing recorded, just exits recording mode
+     *  the same as Cancel, since there's nothing to save. */
+    private fun finishRecordingCustomKey() {
+        if (recordingKeys.isEmpty()) {
+            cancelRecordingCustomKey()
+            return
+        }
+        val defaultLabel = recordingKeys.joinToString("+") { vkLabel(it) }
+        val input = EditText(this).apply {
+            setText(defaultLabel)
+            setTextColor(getColor(R.color.text_primary))
+            setPadding(dp(20), dp(12), dp(20), dp(12))
+        }
         AlertDialog.Builder(this)
-            .setTitle("Custom key")
-            .setView(view)
+            .setTitle("Name this combo")
+            .setView(input)
             .setPositiveButton("Save") { _, _ ->
-                val modifiers = listOfNotNull(
-                    Packet.VK.CONTROL.takeIf { cbCtrl.isChecked },
-                    Packet.VK.ALT.takeIf { cbAlt.isChecked },
-                    Packet.VK.SHIFT.takeIf { cbShift.isChecked },
-                    Packet.VK.LWIN.takeIf { cbWin.isChecked }
-                )
-                val (keyName, keyVk) = KeyCatalog.entries[spinner.selectedItemPosition]
-                val keys = modifiers + keyVk
-                val label = etLabel.text.toString().trim().ifEmpty {
-                    (modifiers.map { vkLabel(it) } + keyName).joinToString("+")
-                }
-                customKeys.add(CustomKey(label, keys))
+                val label = input.text.toString().trim().ifEmpty { defaultLabel }
+                customKeys.add(CustomKey(label, recordingKeys.toList()))
                 CustomKeyStore.save(prefs, customKeys)
                 renderCustomKeys()
+                cancelRecordingCustomKey()
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -674,6 +781,37 @@ class MainActivity : AppCompatActivity() {
         Packet.VK.ALT -> "Alt"
         Packet.VK.SHIFT -> "Shift"
         Packet.VK.LWIN -> "Win"
+        Packet.VK.CAPS_LOCK -> "Caps"
+        Packet.VK.ESC -> "Esc"
+        Packet.VK.TAB -> "Tab"
+        Packet.VK.ENTER -> "Enter"
+        Packet.VK.SPACE -> "Space"
+        Packet.VK.BACK -> "Backspace"
+        Packet.VK.DELETE -> "Del"
+        Packet.VK.HOME -> "Home"
+        Packet.VK.END -> "End"
+        Packet.VK.PAGE_UP -> "PgUp"
+        Packet.VK.PAGE_DOWN -> "PgDn"
+        Packet.VK.PRINT_SCREEN -> "PrtSc"
+        Packet.VK.LEFT -> "←"
+        Packet.VK.UP -> "↑"
+        Packet.VK.DOWN -> "↓"
+        Packet.VK.RIGHT -> "→"
+        Packet.VK.OEM_COMMA -> ","
+        Packet.VK.OEM_PERIOD -> "."
+        Packet.VK.F1 -> "F1"
+        Packet.VK.F2 -> "F2"
+        Packet.VK.F3 -> "F3"
+        Packet.VK.F4 -> "F4"
+        Packet.VK.F5 -> "F5"
+        Packet.VK.F6 -> "F6"
+        Packet.VK.F7 -> "F7"
+        Packet.VK.F8 -> "F8"
+        Packet.VK.F9 -> "F9"
+        Packet.VK.F10 -> "F10"
+        Packet.VK.F11 -> "F11"
+        Packet.VK.F12 -> "F12"
+        in 'A'.code..'Z'.code, in '0'.code..'9'.code -> vk.toChar().toString()
         else -> "0x%02X".format(vk)
     }
 
@@ -929,6 +1067,10 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         releaseAllHeldKeys()
+        // Backgrounding mid-recording (e.g. a notification, a call) shouldn't leave the
+        // UI stuck with the bottom nav/screen preview hidden when the user comes back -
+        // nothing was saved yet anyway, so there's nothing destructive about dropping it.
+        if (isRecordingCustomKey) cancelRecordingCustomKey()
         // Don't keep pulling video in the background - real Wi-Fi/battery cost for no
         // visible benefit while the app isn't on screen.
         screen.stop()

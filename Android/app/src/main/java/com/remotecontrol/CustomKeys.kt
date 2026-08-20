@@ -8,25 +8,6 @@ import org.json.JSONObject
  *  as one [Packet.Combo] (e.g. "New Tab" -> Ctrl+T -> [VK.CONTROL, 'T'.code]). */
 data class CustomKey(val label: String, val keys: List<Int>)
 
-/** The "then press" choices offered in the add-custom-key dialog's spinner - name shown
- *  to the user, paired with the VK code actually sent. */
-object KeyCatalog {
-    val entries: List<Pair<String, Int>> = buildList {
-        add("Enter" to Packet.VK.ENTER)
-        add("Tab" to Packet.VK.TAB)
-        add("Esc" to Packet.VK.ESC)
-        add("Space" to Packet.VK.SPACE)
-        add("Backspace" to Packet.VK.BACK)
-        add("Delete" to Packet.VK.DELETE)
-        add("Up" to Packet.VK.UP)
-        add("Down" to Packet.VK.DOWN)
-        add("Left" to Packet.VK.LEFT)
-        add("Right" to Packet.VK.RIGHT)
-        for (c in 'A'..'Z') add(c.toString() to c.code)
-        for (c in '0'..'9') add(c.toString() to c.code)
-    }
-}
-
 /** Persists the user's custom keys as a single JSON array under one SharedPreferences key. */
 object CustomKeyStore {
     private const val PREF_KEY = "custom_keys"
