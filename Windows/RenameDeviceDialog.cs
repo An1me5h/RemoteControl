@@ -13,6 +13,7 @@ class RenameDeviceDialog : Form
     public RenameDeviceDialog(string currentName)
     {
         Text = "Rename device";
+        Icon = DeviceWindow.AppIcon;
         // Sizable + AutoSize (not a hardcoded Height) - same fix as PriorityDialog's, so
         // this one can't silently clip again the next time its content changes.
         FormBorderStyle = FormBorderStyle.Sizable;

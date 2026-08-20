@@ -67,6 +67,7 @@ class DeviceWindow : Form
         _disconnectDevice = disconnectDevice;
 
         Text = "RemoteControl - Devices";
+        Icon = AppIcon;
         // Widened from 480 -> 680 -> 840 -> 1180 across this file's history, each time to
         // fit the trusted-devices table's growing column count without cramming. This last
         // jump is bigger than the others because it's based on a REAL measurement, not
@@ -757,6 +758,23 @@ class DeviceWindow : Form
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(40, 45, 58);
         button.FlatAppearance.MouseDownBackColor = Color.FromArgb(50, 56, 72);
     }
+
+    /// <ApplicationIcon> in the .csproj only embeds AppIcon.ico as the .exe FILE's own
+    /// Win32 resource (what Explorer shows) - it does NOT make any WinForms Form use it as
+    /// its own Icon property. Every Form defaults to the built-in .NET WinForms icon (the
+    /// generic two-overlapping-squares glyph) unless something explicitly assigns Icon -
+    /// which nothing here ever did, despite the real icon being embedded and previously
+    /// verified present in the compiled binary. That verification only proved the resource
+    /// EXISTS, not that any window actually uses it - this is the gap that left every title
+    /// bar and the taskbar button showing the generic default instead (reported 2026-08-20).
+    /// ExtractAssociatedIcon reads the icon back out of the running exe itself - same
+    /// mechanism (and same icon) the earlier icon-embedding verification already confirmed
+    /// works, so this can't drift from whatever AppIcon.ico actually built into. Shared by
+    /// every Form in this app (set in each one's own constructor) rather than loaded once
+    /// per-window, since Icon.ExtractAssociatedIcon is cheap and safe to call repeatedly on
+    /// the same Application.ExecutablePath.
+    internal static readonly Icon AppIcon =
+        Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
 
     private void RunOnUiThread(Action action)
     {

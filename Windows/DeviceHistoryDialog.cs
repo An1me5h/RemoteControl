@@ -10,6 +10,7 @@ class DeviceHistoryDialog : Form
     public DeviceHistoryDialog(TrustedDevice device)
     {
         Text = $"History - {device.Name}";
+        Icon = DeviceWindow.AppIcon;
         FormBorderStyle = FormBorderStyle.Sizable;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;

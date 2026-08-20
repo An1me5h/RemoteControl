@@ -21,6 +21,7 @@ class PriorityDialog : Form
     public PriorityDialog(int currentPriority)
     {
         Text = "Set connection priority";
+        Icon = DeviceWindow.AppIcon;
         // Sizable (was FixedDialog) plus AutoSize below - together these are what fixed the
         // dialog getting cut off: FixedDialog blocked the user from dragging it bigger to
         // see the rest, AND the Height was a hardcoded guess (180) sized for the OLD, much

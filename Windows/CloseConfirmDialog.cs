@@ -18,6 +18,7 @@ class CloseConfirmDialog : Form
     public CloseConfirmDialog()
     {
         Text = "RemoteControl";
+        Icon = DeviceWindow.AppIcon;
         // Sizable + AutoSize (not a hardcoded Height) - same fix as PriorityDialog's and
         // RenameDeviceDialog's: FixedDialog blocked the user from dragging this bigger, and
         // the message label's own hardcoded Height (70, AutoSize=false) was a guess that
