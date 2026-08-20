@@ -286,6 +286,8 @@ class DeviceWindow : Form
         _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
             { Name = "Permission", HeaderText = "Permission", Width = 95, MinimumWidth = 60, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
         _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
+            { Name = "RemoteAccess", HeaderText = "Remote Access", Width = 110, MinimumWidth = 60, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
+        _trustedGrid.Columns.Add(new DataGridViewTextBoxColumn
             { Name = "Priority", HeaderText = "Priority", Width = 60, MinimumWidth = 50, AutoSizeMode = DataGridViewAutoSizeColumnMode.None });
 
         // Right-click doesn't select a row by default the way a left-click does - without
@@ -479,6 +481,7 @@ class DeviceWindow : Form
                 d.LastConnectedAt?.ToString(DateFormat) ?? "-",
                 d.LastDisconnectedAt?.ToString(DateFormat) ?? "-",
                 d.ViewOnly ? "View Only" : "Full Control",
+                d.RemoteApproved ? "Approved" : "LAN only",
                 d.Priority.ToString());
 
             if (d.DeviceId == _connectedDeviceId)
@@ -509,11 +512,13 @@ class DeviceWindow : Form
         var menu = new ContextMenuStrip();
         var disconnectItem = new ToolStripMenuItem("Disconnect");
         var permissionItem = new ToolStripMenuItem(); // text set fresh in Opening below - depends on the selected device's current ViewOnly state
+        var revokeRemoteItem = new ToolStripMenuItem("Revoke Remote Access"); // visibility set fresh in Opening below - only relevant once a device HAS remote approval
         var priorityItem = new ToolStripMenuItem("Set Priority...");
         var renameItem = new ToolStripMenuItem("Rename...");
         var historyItem = new ToolStripMenuItem("View History...");
         menu.Items.Add(disconnectItem);
         menu.Items.Add(permissionItem);
+        menu.Items.Add(revokeRemoteItem);
         menu.Items.Add(priorityItem);
         menu.Items.Add(renameItem);
         menu.Items.Add(historyItem);
@@ -528,6 +533,9 @@ class DeviceWindow : Form
             var device = SelectedDevice();
             if (device == null) { e.Cancel = true; return; }
             permissionItem.Text = device.ViewOnly ? "Set to Full Control" : "Set to View Only";
+            // Nothing to revoke for a device that was only ever approved on the LAN -
+            // hidden rather than disabled, so the menu doesn't show a dead item every time.
+            revokeRemoteItem.Visible = device.RemoteApproved;
         };
 
         // Only makes sense for whichever row IS the live connection right now - Forget
@@ -542,6 +550,12 @@ class DeviceWindow : Form
         {
             var device = SelectedDevice();
             if (device != null) _pairing.SetViewOnly(device.DeviceId, !device.ViewOnly);
+        };
+
+        revokeRemoteItem.Click += (_, _) =>
+        {
+            var device = SelectedDevice();
+            if (device != null) _pairing.RevokeRemoteAccess(device.DeviceId);
         };
 
         priorityItem.Click += (_, _) =>

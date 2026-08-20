@@ -113,6 +113,14 @@ class Server
     {
         client.NoDelay = true;
 
+        // A phone connecting over Tailscale reaches this PC's Tailscale IP, so its remote
+        // endpoint here IS its own 100.x.y.z tailnet address - checking THAT (not this
+        // machine's own address) is what tells the handshake below whether this specific
+        // connection arrived off the LAN, regardless of whether the device is otherwise
+        // already trusted.
+        bool isRemote = client.Client.RemoteEndPoint is IPEndPoint remoteEndPoint &&
+            TailscaleHelper.IsTailscaleAddress(remoteEndPoint.Address);
+
         long? slotGeneration = null;
         bool approved = false;
         string? deviceId = null;
@@ -164,7 +172,7 @@ class Server
                     KickConnectedClient();
                 }
 
-                var handshakeResult = await PerformHandshakeAsync(reader, writer, handshakeCts.Token, hello.Value, label, deviceId);
+                var handshakeResult = await PerformHandshakeAsync(reader, writer, handshakeCts.Token, hello.Value, label, deviceId, isRemote);
                 if (handshakeResult == null)
                 {
                     _pairing.ReleaseSlot(slotGeneration.Value);
@@ -331,29 +339,38 @@ class Server
     /// Runs the rest of the handshake after HELLO's already been read (see ReadHelloAsync)
     /// and the slot's already been claimed for this device. A recognized (DeviceId+Model
     /// +Build all matching a saved entry) device is welcomed immediately, silently, so
-    /// normal reconnects stay seamless. An unrecognized device has to prove it knows a
-    /// one-time code shown in the PC's device window before it's trusted and saved. Returns
-    /// a display label and the device's id for the approved device, or null if the
-    /// handshake was rejected/abandoned/timed out.
+    /// normal reconnects stay seamless - UNLESS this specific connection arrived from off
+    /// the LAN (isRemote, see HandleClientAsync) and the device hasn't been separately
+    /// approved for that (TrustedDevice.RemoteApproved), in which case it's treated the
+    /// same as an unrecognized device below: being trusted on the LAN shouldn't silently
+    /// extend to "trusted from anywhere," since a LAN pairing implicitly assumed physical
+    /// proximity that a remote connection doesn't have. An unrecognized device (or a
+    /// trusted one still needing remote approval) has to prove it knows a one-time code
+    /// shown in the PC's device window before it's let in. Returns a display label and the
+    /// device's id for the approved device, or null if the handshake was
+    /// rejected/abandoned/timed out.
     private async Task<(string Label, string DeviceId)?> PerformHandshakeAsync(
-        StreamReader reader, StreamWriter writer, CancellationToken token, Packet hello, string label, string deviceId)
+        StreamReader reader, StreamWriter writer, CancellationToken token, Packet hello, string label, string deviceId, bool isRemote)
     {
-        if (_pairing.FindTrusted(hello.DeviceId!, hello.Model!, hello.Build!) != null)
+        var trusted = _pairing.FindTrusted(hello.DeviceId!, hello.Model!, hello.Build!);
+        if (trusted != null && (!isRemote || trusted.RemoteApproved))
         {
             await writer.WriteLineAsync("{\"t\":\"WELCOME\"}");
             return (label, deviceId);
         }
 
-        // Not a recognized device - only allowed in if the user has explicitly opened
-        // pairing mode (DeviceWindow's "Add New Device" button). No open code means no
-        // unrecognized device gets past HELLO, full stop - this is what makes pairing
-        // opt-in rather than any stranger on the LAN being able to try guessing a code
-        // whenever they feel like it.
+        // Either a genuinely unrecognized device, or a trusted one connecting remotely for
+        // the first time - either way, only allowed in if the user has explicitly opened
+        // pairing mode (DeviceWindow's "Add New Device" button). No open code means nothing
+        // gets past HELLO, full stop - this is what makes pairing (and remote approval)
+        // opt-in rather than automatic.
         string? code = _pairing.OpenCode;
         if (code == null)
         {
             await writer.WriteLineAsync("{\"t\":\"REJECTED\",\"reason\":\"pairing_closed\"}");
-            ConnectionRejected?.Invoke($"unrecognized device rejected - pairing isn't open ({label})");
+            ConnectionRejected?.Invoke(trusted != null
+                ? $"{label} is trusted but not yet approved for remote access, and pairing isn't open"
+                : $"unrecognized device rejected - pairing isn't open ({label})");
             return null;
         }
 
@@ -372,7 +389,8 @@ class Server
                 var codePacket = PacketCodec.Decode(codeLine);
                 if (codePacket is { Type: PacketType.PairCode } && codePacket.Value.Code == _pairing.OpenCode)
                 {
-                    _pairing.Approve(hello.DeviceId!, hello.Model!, hello.Build!, hello.Name ?? hello.Model!);
+                    if (trusted != null) _pairing.ApproveRemote(trusted.DeviceId);
+                    else _pairing.Approve(hello.DeviceId!, hello.Model!, hello.Build!, hello.Name ?? hello.Model!, isRemote);
                     await writer.WriteLineAsync("{\"t\":\"WELCOME\"}");
                     return (label, deviceId);
                 }

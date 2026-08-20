@@ -28,10 +28,19 @@ record DeviceHistoryEntry(DateTime At, string EventText);
 /// means "no priority set", not "priority zero" - it's treated as weaker than every
 /// explicitly-numbered device, so priority stays opt-in: nothing preempts anything until
 /// the user actually assigns a real number to at least one device.
+/// RemoteApproved: being trusted on the LAN does NOT automatically trust this device from
+/// off-LAN (e.g. over Tailscale) - Server.cs's handshake still requires a fresh
+/// pairing-code approval the first time a trusted device connects from a remote address,
+/// same opt-in-with-a-code flow a brand-new device goes through. Once approved this way it
+/// stays approved (until explicitly revoked from DeviceWindow), so this is a one-time step
+/// per device, not per remote session. Default false so an OLD trusted_devices.json (saved
+/// before this existed) doesn't retroactively grant remote access to devices that were
+/// only ever approved over the LAN.
 record TrustedDevice(
     string DeviceId, string Model, string Build, string Name, DateTime PairedAt,
     DateTime? LastConnectedAt = null, DateTime? LastDisconnectedAt = null,
-    List<DeviceHistoryEntry>? History = null, bool ViewOnly = false, int Priority = 0)
+    List<DeviceHistoryEntry>? History = null, bool ViewOnly = false, int Priority = 0,
+    bool RemoteApproved = false)
 {
     public List<DeviceHistoryEntry> History { get; init; } = History ?? new List<DeviceHistoryEntry>();
 }

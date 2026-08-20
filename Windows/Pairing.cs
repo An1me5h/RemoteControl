@@ -127,14 +127,21 @@ class PairingCoordinator
 
     public void NotifyAttemptEnded() => PairingAttemptEnded?.Invoke();
 
-    public void Approve(string deviceId, string model, string build, string name)
+    public void Approve(string deviceId, string model, string build, string name, bool remoteApproved)
     {
         TrustedDevice device;
         lock (_lock)
         {
             _trusted.RemoveAll(d => d.DeviceId == deviceId);
+            // remoteApproved seeds RemoteApproved from whether THIS pairing itself happened
+            // over a remote (Tailscale) connection - proving a code on that exact
+            // connection is exactly the same proof-of-authorization Server.cs already
+            // requires for an existing device's later remote approval (ApproveRemote,
+            // below), so there's no reason to make a brand-new device jump through it
+            // again immediately after.
             device = new TrustedDevice(deviceId, model, build, name, DateTime.Now,
-                History: new List<DeviceHistoryEntry> { new(DateTime.Now, "Paired") });
+                History: new List<DeviceHistoryEntry> { new(DateTime.Now, "Paired") },
+                RemoteApproved: remoteApproved);
             _trusted.Add(device);
             DeviceTrustStore.Save(_trusted);
             _openCode = null; // single-use: this open/scan cycle is done
@@ -142,6 +149,36 @@ class PairingCoordinator
         PairingClosed?.Invoke();
         DeviceApproved?.Invoke(device);
     }
+
+    /// Approves an ALREADY-trusted device for off-LAN (e.g. Tailscale) connections - a
+    /// lighter cousin of Approve() above for the case where the device itself isn't a
+    /// stranger, just hasn't been cleared to connect from outside the LAN yet (see
+    /// Server.PerformHandshakeAsync's remote gate). Reuses the exact same pairing-code
+    /// flow/UI as a brand-new device rather than inventing a separate mechanism, so remote
+    /// approval inherits the same opt-in-with-a-code security property - it just updates
+    /// the existing record in place instead of re-creating it, keeping the device's name,
+    /// priority, view-only setting, and history intact.
+    public void ApproveRemote(string deviceId)
+    {
+        TrustedDevice? device;
+        lock (_lock)
+        {
+            int index = _trusted.FindIndex(d => d.DeviceId == deviceId);
+            if (index < 0) return;
+            device = WithHistory(_trusted[index], "Approved for remote (off-LAN) access") with { RemoteApproved = true };
+            _trusted[index] = device;
+            DeviceTrustStore.Save(_trusted);
+            _openCode = null; // single-use, same as Approve
+        }
+        PairingClosed?.Invoke();
+        DeviceUpdated?.Invoke(device);
+    }
+
+    /// Walks back ApproveRemote - DeviceWindow's right-click "Revoke Remote Access". The
+    /// device stays trusted on the LAN; it would just need a fresh code again the next time
+    /// it tries to connect from off-LAN.
+    public void RevokeRemoteAccess(string deviceId) =>
+        UpdateDevice(deviceId, device => WithHistory(device, "Remote access revoked") with { RemoteApproved = false });
 
     public void Forget(string deviceId)
     {

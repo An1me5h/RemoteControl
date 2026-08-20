@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 
@@ -38,4 +39,12 @@ static class TailscaleHelper
     }
 
     private static bool IsTailscaleRange(byte[] v4) => v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127;
+
+    /// True if the given address is a Tailscale tailnet address - used by Server.cs to
+    /// classify an INCOMING connection's remote endpoint as "arrived over the tailnet, not
+    /// the LAN" (a phone connecting to this PC's Tailscale IP shows up here as its OWN
+    /// 100.x.y.z address), which gates whether an already-trusted device still needs a
+    /// fresh pairing-code approval before being let in remotely.
+    public static bool IsTailscaleAddress(IPAddress address) =>
+        address.AddressFamily == AddressFamily.InterNetwork && IsTailscaleRange(address.GetAddressBytes());
 }
