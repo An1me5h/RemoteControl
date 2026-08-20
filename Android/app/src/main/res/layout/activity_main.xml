@@ -177,181 +177,35 @@
                     android:layout_height="match_parent"
                     android:background="@color/surface" />
 
-                <ScrollView
+                <!-- The keyboard itself is a self-contained, portable component - see
+                     RemoteKeyboardView.kt - with no knowledge of custom keys, which stay
+                     here as this app's own concern (persistence, the "+ Custom Key"
+                     recording-mode chrome in MainActivity). -->
+                <LinearLayout
                     android:id="@+id/keyboardPanel"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
+                    android:orientation="vertical"
                     android:visibility="gone"
                     android:background="@color/surface">
 
+                    <com.remotecontrol.RemoteKeyboardView
+                        android:id="@+id/remoteKeyboard"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:layout_weight="1" />
+
+                    <!-- custom keys: user-defined combos, e.g. Ctrl+T -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="vertical"
-                        android:padding="6dp">
+                        android:paddingHorizontal="6dp"
+                        android:paddingBottom="6dp">
 
-                        <!-- special keys -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <Button android:id="@+id/keyEsc" style="@style/KeyButton" android:text="Esc" />
-                            <Button android:id="@+id/keyTab" style="@style/KeyButton" android:text="Tab" />
-                            <Button android:id="@+id/keyCtrl" style="@style/KeyButton" android:text="Ctrl" />
-                            <Button android:id="@+id/keyAlt" style="@style/KeyButton" android:text="Alt" />
-                            <Button android:id="@+id/keyShift" style="@style/KeyButton" android:text="Shift" />
-                            <Button android:id="@+id/keyWin" style="@style/KeyButton" android:text="Win" />
-                        </LinearLayout>
-
-                        <!-- function keys -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <Button android:id="@+id/keyF1" style="@style/KeyButton" android:text="F1" />
-                            <Button android:id="@+id/keyF2" style="@style/KeyButton" android:text="F2" />
-                            <Button android:id="@+id/keyF3" style="@style/KeyButton" android:text="F3" />
-                            <Button android:id="@+id/keyF4" style="@style/KeyButton" android:text="F4" />
-                            <Button android:id="@+id/keyF5" style="@style/KeyButton" android:text="F5" />
-                            <Button android:id="@+id/keyF6" style="@style/KeyButton" android:text="F6" />
-                        </LinearLayout>
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <Button android:id="@+id/keyF7" style="@style/KeyButton" android:text="F7" />
-                            <Button android:id="@+id/keyF8" style="@style/KeyButton" android:text="F8" />
-                            <Button android:id="@+id/keyF9" style="@style/KeyButton" android:text="F9" />
-                            <Button android:id="@+id/keyF10" style="@style/KeyButton" android:text="F10" />
-                            <Button android:id="@+id/keyF11" style="@style/KeyButton" android:text="F11" />
-                            <Button android:id="@+id/keyF12" style="@style/KeyButton" android:text="F12" />
-                        </LinearLayout>
-
-                        <!-- navigation + misc: CapsLock, Home/End, PageUp/PageDown, PrintScreen, Delete -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <Button android:id="@+id/keyCapsLock" style="@style/KeyButton" android:text="Caps" />
-                            <Button android:id="@+id/keyHome" style="@style/KeyButton" android:text="Home" />
-                            <Button android:id="@+id/keyEnd" style="@style/KeyButton" android:text="End" />
-                            <Button android:id="@+id/keyPageUp" style="@style/KeyButton" android:text="PgUp" />
-                            <Button android:id="@+id/keyPageDown" style="@style/KeyButton" android:text="PgDn" />
-                            <Button android:id="@+id/keyPrintScreen" style="@style/KeyButton" android:text="PrtSc" />
-                            <Button android:id="@+id/keyDelete" style="@style/KeyButton" android:text="Del" />
-                        </LinearLayout>
-
-                        <!-- number row -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <Button style="@style/CharKeyButton" android:tag="1" android:text="1" />
-                            <Button style="@style/CharKeyButton" android:tag="2" android:text="2" />
-                            <Button style="@style/CharKeyButton" android:tag="3" android:text="3" />
-                            <Button style="@style/CharKeyButton" android:tag="4" android:text="4" />
-                            <Button style="@style/CharKeyButton" android:tag="5" android:text="5" />
-                            <Button style="@style/CharKeyButton" android:tag="6" android:text="6" />
-                            <Button style="@style/CharKeyButton" android:tag="7" android:text="7" />
-                            <Button style="@style/CharKeyButton" android:tag="8" android:text="8" />
-                            <Button style="@style/CharKeyButton" android:tag="9" android:text="9" />
-                            <Button style="@style/CharKeyButton" android:tag="0" android:text="0" />
-                        </LinearLayout>
-
-                        <!-- qwertyuiop -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <Button style="@style/CharKeyButton" android:tag="q" android:text="q" />
-                            <Button style="@style/CharKeyButton" android:tag="w" android:text="w" />
-                            <Button style="@style/CharKeyButton" android:tag="e" android:text="e" />
-                            <Button style="@style/CharKeyButton" android:tag="r" android:text="r" />
-                            <Button style="@style/CharKeyButton" android:tag="t" android:text="t" />
-                            <Button style="@style/CharKeyButton" android:tag="y" android:text="y" />
-                            <Button style="@style/CharKeyButton" android:tag="u" android:text="u" />
-                            <Button style="@style/CharKeyButton" android:tag="i" android:text="i" />
-                            <Button style="@style/CharKeyButton" android:tag="o" android:text="o" />
-                            <Button style="@style/CharKeyButton" android:tag="p" android:text="p" />
-                        </LinearLayout>
-
-                        <!-- asdfghjkl -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <Button style="@style/CharKeyButton" android:tag="a" android:text="a" />
-                            <Button style="@style/CharKeyButton" android:tag="s" android:text="s" />
-                            <Button style="@style/CharKeyButton" android:tag="d" android:text="d" />
-                            <Button style="@style/CharKeyButton" android:tag="f" android:text="f" />
-                            <Button style="@style/CharKeyButton" android:tag="g" android:text="g" />
-                            <Button style="@style/CharKeyButton" android:tag="h" android:text="h" />
-                            <Button style="@style/CharKeyButton" android:tag="j" android:text="j" />
-                            <Button style="@style/CharKeyButton" android:tag="k" android:text="k" />
-                            <Button style="@style/CharKeyButton" android:tag="l" android:text="l" />
-                        </LinearLayout>
-
-                        <!-- zxcvbnm -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <Button style="@style/CharKeyButton" android:tag="z" android:text="z" />
-                            <Button style="@style/CharKeyButton" android:tag="x" android:text="x" />
-                            <Button style="@style/CharKeyButton" android:tag="c" android:text="c" />
-                            <Button style="@style/CharKeyButton" android:tag="v" android:text="v" />
-                            <Button style="@style/CharKeyButton" android:tag="b" android:text="b" />
-                            <Button style="@style/CharKeyButton" android:tag="n" android:text="n" />
-                            <Button style="@style/CharKeyButton" android:tag="m" android:text="m" />
-                            <Button style="@style/CharKeyButton" android:tag="," android:text="," />
-                            <Button style="@style/CharKeyButton" android:tag="." android:text="." />
-                        </LinearLayout>
-
-                        <!-- arrows + backspace/enter -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <Button android:id="@+id/keyLeft" style="@style/KeyButton" android:text="←" />
-                            <Button android:id="@+id/keyUp" style="@style/KeyButton" android:text="↑" />
-                            <Button android:id="@+id/keyDown" style="@style/KeyButton" android:text="↓" />
-                            <Button android:id="@+id/keyRight" style="@style/KeyButton" android:text="→" />
-                            <Button android:id="@+id/keyBack" style="@style/KeyButton" android:text="⌫" />
-                        </LinearLayout>
-
-                        <!-- space + enter -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <Button
-                                android:id="@+id/keySpace"
-                                style="@style/KeyButton"
-                                android:layout_weight="3"
-                                android:text="Space" />
-
-                            <Button
-                                android:id="@+id/keyEnter"
-                                style="@style/KeyButton"
-                                android:layout_weight="1"
-                                android:text="Enter" />
-                        </LinearLayout>
-
-                        <!-- custom keys: user-defined combos, e.g. Ctrl+T -->
                         <TextView
                             style="@style/ConfigLabel"
-                            android:layout_marginTop="12dp"
+                            android:layout_marginTop="8dp"
                             android:text="Custom Keys" />
 
                         <LinearLayout
@@ -367,7 +221,7 @@
                             android:layout_marginTop="4dp"
                             android:text="+ Custom Key" />
                     </LinearLayout>
-                </ScrollView>
+                </LinearLayout>
 
                 <!-- type-and-send: real phone keyboard, sent as one block instead of
                      one KEY packet per character -->
