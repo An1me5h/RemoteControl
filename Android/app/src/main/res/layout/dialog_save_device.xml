@@ -21,6 +21,20 @@
     <TextView
         style="@style/ConfigLabel"
         android:layout_marginTop="16dp"
+        android:text="Location (optional)" />
+
+    <EditText
+        android:id="@+id/etDeviceLocation"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="e.g. Home, Office, Tailscale - for saving the same device more than once"
+        android:inputType="text"
+        android:textColor="@color/text_primary"
+        android:textColorHint="@color/text_secondary" />
+
+    <TextView
+        style="@style/ConfigLabel"
+        android:layout_marginTop="16dp"
         android:text="Device type" />
 
     <Spinner

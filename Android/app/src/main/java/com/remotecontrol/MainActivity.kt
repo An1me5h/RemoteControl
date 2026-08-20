@@ -692,8 +692,9 @@ class MainActivity : AppCompatActivity() {
         savedDevicesContainer.removeAllViews()
         val margin = dp(2)
         for (device in savedDevices) {
+            val label = if (device.location.isNotBlank()) "${device.name} — ${device.location}" else device.name
             val button = Button(this, null, 0, R.style.KeyButton).apply {
-                text = "${DeviceTypeCatalog.icon(device.deviceType)}  ${device.name}  (${device.host}:${device.port})"
+                text = "${DeviceTypeCatalog.icon(device.deviceType)}  $label  (${device.host}:${device.port})"
                 // See renderCustomKeys' identical fix - code-constructed buttons need this
                 // set explicitly, they don't get it for free from the theme the way an
                 // XML-declared button does.
@@ -747,6 +748,7 @@ class MainActivity : AppCompatActivity() {
 
         val view = layoutInflater.inflate(R.layout.dialog_save_device, null)
         val etName = view.findViewById<EditText>(R.id.etDeviceName)
+        val etLocation = view.findViewById<EditText>(R.id.etDeviceLocation)
         val spinner = view.findViewById<Spinner>(R.id.spinnerDeviceType)
         spinner.adapter = ArrayAdapter(
             this, android.R.layout.simple_spinner_dropdown_item, DeviceTypeCatalog.types
@@ -758,7 +760,8 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Save") { _, _ ->
                 val type = DeviceTypeCatalog.types[spinner.selectedItemPosition]
                 val name = etName.text.toString().trim().ifEmpty { type }
-                savedDevices.add(SavedDevice(name, host, port, type))
+                val location = etLocation.text.toString().trim()
+                savedDevices.add(SavedDevice(name, host, port, type, location))
                 SavedDeviceStore.save(prefs, savedDevices)
                 renderSavedDevices()
             }
@@ -876,6 +879,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
         conn.onLog = { msg -> logText.text = msg }
+        // logText alone was easy to miss - it's a small status line, overwritten by the
+        // NEXT retry attempt's own log within a few seconds since ConnectionManager keeps
+        // retrying every 3s. A Toast is hard to miss and only fires once per connect
+        // attempt (not every retry), reported by the user as wanting a clear reason when a
+        // tapped saved device fails to connect.
+        conn.onConnectFailed = { reason -> Toast.makeText(this, reason, Toast.LENGTH_LONG).show() }
         conn.onLatency = { rtt ->
             latencyText.visibility = View.VISIBLE
             latencyText.text = "${rtt}ms"

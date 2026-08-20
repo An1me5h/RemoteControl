@@ -18,7 +18,6 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** TCP client to RemoteControl.exe: connect/reconnect, UDP discovery, pairing handshake,
  *  and PING/PONG latency. [context] is only used to read [DeviceIdentity.id] -
@@ -56,7 +55,7 @@ class ConnectionManager(private val context: Context) {
          *  dropped. */
         const val PAIRING_CODE_WAIT_MS = 110_000L
 
-        /** How often [waitForPairingCode] wakes up to recheck `running` - keeps a stale
+        /** How often [waitForPairingCode] wakes up to recheck its generation - keeps a stale
          *  handshake from blocking (and holding the PC's connection slot) for anywhere
          *  near the full [PAIRING_CODE_WAIT_MS] after a `disconnect()` call. */
         const val PAIRING_CODE_POLL_SLICE_MS = 500L
@@ -79,7 +78,30 @@ class ConnectionManager(private val context: Context) {
     var currentHost: String? = null
         private set
 
-    private val running = AtomicBoolean(false)
+    /** Fired when a connect attempt fails outright (unreachable host, refused, discovery
+     *  failure) - once per fresh connect()/disconnect()+connect() cycle, not on every
+     *  3s retry, so the endless reconnect loop against a genuinely dead target doesn't
+     *  spam this. See connectLoop's hasReportedFailure. */
+    var onConnectFailed: ((String) -> Unit)? = null
+
+    // Replaces a plain "running" boolean. The problem a boolean can't solve: disconnect()
+    // (called synchronously on the UI thread, e.g. from selectSavedDevice) flips its flag
+    // and closes the socket, but the OLD connectLoop() is still unwinding on the
+    // single-thread executor in the background - if connect() for a NEW target runs before
+    // that unwind reaches its own "should I keep looping" check, a shared boolean would
+    // already be back to true, so the OLD loop just treats this as an ordinary drop and
+    // reconnects to ITS OWN (stale, captured) host - exactly the reported bug: tapping a
+    // different saved device while connected elsewhere reconnected to the OLD target
+    // instead, because the truly-new connectLoop task was left queued behind the old one on
+    // the single-thread executor, which never exited since it kept seeing "running=true".
+    // A monotonic generation number sidesteps this entirely: connect() always mints a NEW
+    // generation, and a connectLoop only ever continues if ITS OWN captured generation is
+    // still the current one - no in-flight loop can ever be "revived" by a later call, since
+    // that later call already claimed a newer generation for itself. Same pattern as
+    // PairingCoordinator's _slotGeneration on the Windows side, for the analogous problem.
+    private val generation = java.util.concurrent.atomic.AtomicLong(0)
+    private fun isCurrent(gen: Long) = generation.get() == gen
+
     private val executor = Executors.newSingleThreadExecutor()
     // Separate from [executor]: that one is tied up for the whole lifetime of connectLoop/
     // readLoop, so a write submitted there would never run until disconnect. This one exists
@@ -100,14 +122,17 @@ class ConnectionManager(private val context: Context) {
      *  draining a backlog from before. Replayed in order once the drain loop gets to them. */
     private val offlineQueue = ConcurrentLinkedQueue<Packet>()
 
-    /** host == null means "discover it on the LAN"; a non-null host skips discovery. */
+    /** host == null means "discover it on the LAN"; a non-null host skips discovery. Always
+     *  starts a genuinely fresh attempt (new generation) - no "already running, ignore this
+     *  call" guard, since callers like selectSavedDevice always pair this with an explicit
+     *  disconnect() right before, precisely to switch targets. */
     fun connect(host: String?, port: Int) {
-        if (running.getAndSet(true)) return
-        executor.execute { connectLoop(host, port) }
+        val myGeneration = generation.incrementAndGet()
+        executor.execute { connectLoop(host, port, myGeneration) }
     }
 
     fun disconnect() {
-        running.set(false)
+        generation.incrementAndGet() // invalidates any in-flight connectLoop immediately
         offlineQueue.clear() // user-initiated - the backlog is no longer relevant
         closeSocket()
         setState(State.DISCONNECTED)
@@ -180,12 +205,23 @@ class ConnectionManager(private val context: Context) {
         }
     }
 
-    private fun connectLoop(host: String?, port: Int) {
-        while (running.get()) {
+    private fun connectLoop(host: String?, port: Int, myGeneration: Long) {
+        // Reported once per distinct "trying to connect" stretch, not on every 3s retry -
+        // resets after a real CONNECTED (below), so a later drop-and-fail gets its own
+        // fresh report instead of staying silenced by the very first failure ever seen.
+        var hasReportedFailure = false
+        fun reportFailure(reason: String) {
+            if (hasReportedFailure) return
+            hasReportedFailure = true
+            mainHandler.post { onConnectFailed?.invoke(reason) }
+        }
+
+        while (isCurrent(myGeneration)) {
             setState(State.CONNECTING)
             val target = host ?: discoverHost(port)
             if (target == null) {
                 log("Discovery failed")
+                reportFailure("Couldn't find this PC on the network - make sure RemoteControl.exe is running and you're on the same Wi-Fi.")
                 sleep(RECONNECT_DELAY_MS)
                 continue
             }
@@ -199,30 +235,40 @@ class ConnectionManager(private val context: Context) {
                 val reader = BufferedReader(InputStreamReader(s.getInputStream()))
                 val handshakeWriter = PrintWriter(s.getOutputStream(), true)
 
-                if (!performHandshake(s, reader, handshakeWriter)) {
+                if (!performHandshake(s, reader, handshakeWriter, myGeneration)) {
                     // Rejected/timed out/abandoned - already logged. Treat like any other
                     // failed connection attempt: fall through to the reconnect sleep below.
                     closeSocket()
-                    if (running.get()) sleep(RECONNECT_DELAY_MS)
+                    if (isCurrent(myGeneration)) {
+                        reportFailure("Connected to $target:$port but the PC rejected it - see the log for why.")
+                        sleep(RECONNECT_DELAY_MS)
+                    }
                     continue
                 }
 
                 writer = handshakeWriter
                 setState(State.CONNECTED)
+                hasReportedFailure = false
                 log("Connected to $target:$port")
                 if (offlineQueue.isNotEmpty()) log("Replaying ${offlineQueue.size} queued packet(s)")
                 drainOfflineQueue()
-                readLoop(s, reader)
-                if (running.get()) log("Disconnected")
+                readLoop(s, reader, myGeneration)
+                if (isCurrent(myGeneration)) log("Disconnected")
             } catch (e: Exception) {
-                if (running.get()) log("Connection error: ${e.message}")
+                if (isCurrent(myGeneration)) {
+                    log("Connection error: ${e.message}")
+                    reportFailure("Couldn't reach $target:$port - ${e.message ?: "connection failed"}.")
+                }
             } finally {
                 closeSocket()
             }
 
-            if (running.get()) sleep(RECONNECT_DELAY_MS)
+            if (isCurrent(myGeneration)) sleep(RECONNECT_DELAY_MS)
         }
-        setState(State.DISCONNECTED)
+        // Only this generation may set DISCONNECTED - if a newer connect() call has already
+        // superseded it, that connection's own state (CONNECTING/CONNECTED) must not be
+        // stomped by this older loop finally noticing it's obsolete.
+        if (isCurrent(myGeneration)) setState(State.DISCONNECTED)
     }
 
     /** Sends HELLO and handles whatever the PC asks for next: WELCOME (done), REJECTED
@@ -230,7 +276,7 @@ class ConnectionManager(private val context: Context) {
      *  UI submits a code, loops on WRONGCODE). Returns true only on WELCOME. Runs entirely
      *  on the connectLoop background thread - the blocking wait for a UI-driven pairing
      *  code is exactly what [pairingCodeQueue] bridges. */
-    private fun performHandshake(s: Socket, reader: BufferedReader, writer: PrintWriter): Boolean {
+    private fun performHandshake(s: Socket, reader: BufferedReader, writer: PrintWriter, myGeneration: Long): Boolean {
         val hello = Packet.Hello(
             deviceId = DeviceIdentity.id(context),
             model = DeviceIdentity.model,
@@ -265,9 +311,9 @@ class ConnectionManager(private val context: Context) {
         mainHandler.post { onPairingRequired?.invoke("this PC") }
         try {
             while (true) {
-                val code = waitForPairingCode()
+                val code = waitForPairingCode(myGeneration)
                 if (code == null) {
-                    if (running.get()) log("Pairing timed out waiting for a code")
+                    if (isCurrent(myGeneration)) log("Pairing timed out waiting for a code")
                     return false
                 }
 
@@ -303,10 +349,10 @@ class ConnectionManager(private val context: Context) {
      *  scanning a fresh QR while a previous attempt is still stuck waiting on a code that
      *  will never come) is noticed within [PAIRING_CODE_POLL_SLICE_MS] instead of the
      *  stale attempt sitting there - and holding the PC's one connection slot - for up to
-     *  110 seconds. Returns null on either a real timeout or `running` going false. */
-    private fun waitForPairingCode(): String? {
+     *  110 seconds. Returns null on either a real timeout or this generation being superseded. */
+    private fun waitForPairingCode(myGeneration: Long): String? {
         val deadline = System.currentTimeMillis() + PAIRING_CODE_WAIT_MS
-        while (running.get() && System.currentTimeMillis() < deadline) {
+        while (isCurrent(myGeneration) && System.currentTimeMillis() < deadline) {
             val remaining = (deadline - System.currentTimeMillis()).coerceAtLeast(0L)
             val slice = remaining.coerceAtMost(PAIRING_CODE_POLL_SLICE_MS)
             val code = pairingCodeQueue.poll(slice, TimeUnit.MILLISECONDS)
@@ -337,9 +383,9 @@ class ConnectionManager(private val context: Context) {
      *  or throws on a real socket error, both of which send [connectLoop] back to reconnect.
      *  Takes the same [reader] the handshake used - creating a second BufferedReader on the
      *  same stream here would risk losing bytes already sitting in the first one's buffer. */
-    private fun readLoop(s: Socket, reader: BufferedReader) {
+    private fun readLoop(s: Socket, reader: BufferedReader, myGeneration: Long) {
         var nextPing = System.currentTimeMillis()
-        while (running.get() && !s.isClosed) {
+        while (isCurrent(myGeneration) && !s.isClosed) {
             val now = System.currentTimeMillis()
             if (now >= nextPing) {
                 lastPingSentAt = now

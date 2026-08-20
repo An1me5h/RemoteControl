@@ -5,8 +5,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** A saved connection target: which PC/TV/Pi/etc. to control, so switching between
- *  multiple devices on the same network doesn't mean retyping an IP every time. */
-data class SavedDevice(val name: String, val host: String, val port: Int, val deviceType: String)
+ *  multiple devices on the same network doesn't mean retyping an IP every time.
+ *  [location] is an optional free-text tag ("Home", "Office", "Tailscale") for when the
+ *  SAME physical device needs multiple saved entries because its IP changes per network -
+ *  e.g. "Ani's Laptop" saved once per place it's reachable from, distinguished by location
+ *  rather than by cramming it into the name. Defaults to "" so old saved JSON (from before
+ *  this field existed) still loads cleanly - see SavedDeviceStore.load. */
+data class SavedDevice(val name: String, val host: String, val port: Int, val deviceType: String, val location: String = "")
 
 /** The device-type choices offered when saving a device, each with a small icon glyph
  *  shown next to it in the saved-devices list. "Other" covers anything not listed - a
@@ -40,7 +45,8 @@ object SavedDeviceStore {
                     obj.getString("name"),
                     obj.getString("host"),
                     obj.getInt("port"),
-                    obj.optString("deviceType", "Other")
+                    obj.optString("deviceType", "Other"),
+                    obj.optString("location", "")
                 )
             }
         } catch (e: Exception) {
@@ -56,6 +62,7 @@ object SavedDeviceStore {
             obj.put("host", d.host)
             obj.put("port", d.port)
             obj.put("deviceType", d.deviceType)
+            obj.put("location", d.location)
             array.put(obj)
         }
         prefs.edit().putString(PREF_KEY, array.toString()).apply()
