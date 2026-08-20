@@ -51,10 +51,17 @@ class ZoomableImageView @JvmOverloads constructor(
                 val previousZoom = zoom
                 zoom = (zoom * detector.scaleFactor).coerceIn(MIN_ZOOM, MAX_ZOOM)
 
-                // Keep the point under the user's fingers stationary while zooming.
+                // Keep the point under the user's fingers stationary while zooming. panX/
+                // panY are offsets from the view's CENTER (applyTransform adds them on top
+                // of the already-centered fitCenter offset) - detector.focusX/focusY are
+                // raw view coordinates (0 at the left/top edge) and have to be re-centered
+                // the same way before use here, or every pinch tick nudges the image by
+                // (view size / 2) * (1 - actualFactor) more than it should. The double-tap
+                // handler below already centers its own pan math this way; this one didn't,
+                // which is what made the image visibly drift/jump mid-pinch.
                 val actualFactor = zoom / previousZoom
-                val focusX = detector.focusX
-                val focusY = detector.focusY
+                val focusX = detector.focusX - width / 2f
+                val focusY = detector.focusY - height / 2f
                 panX = focusX + (panX - focusX) * actualFactor
                 panY = focusY + (panY - focusY) * actualFactor
 
